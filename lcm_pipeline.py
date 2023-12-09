@@ -185,7 +185,6 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         return_dict: bool = True,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
     ):
-        
         # 0. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor

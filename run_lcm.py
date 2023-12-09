@@ -505,7 +505,7 @@ if __name__ == '__main__':
         timesteps = pipe.scheduler.timesteps
 
         latents = pipe.prepare_latents(
-            batch_size,
+            batch_size* config.num_images_per_prompt,
             num_channels_latents,
             config.default_H,
             config.default_W,
@@ -648,16 +648,7 @@ if __name__ == '__main__':
         
                         
                         ############# START: Controlnet, DenseDiff
-                        # controlnet(s) inference
-                        # 일단 guess_mode = False상태임, do_classifier_free_guidance 는 True
-                        if config.guess_mode and do_classifier_free_guidance:
-                            # Infer ControlNet only for the conditional batch.
-                            control_model_input = latents_for_view # todo: guess mode 뭐고?
-                            control_model_input = pipe.scheduler.scale_model_input(control_model_input, t)
-                            controlnet_prompt_embeds = prompt_embeds_input.chunk(2)[1]
-                        else:
-                            control_model_input = latent_model_input
-                            controlnet_prompt_embeds = prompt_embeds_input
+    
             
                         bs  =  batch_size * config.num_images_per_prompt
                         w = torch.tensor(config.guidance_scale).repeat(bs)
@@ -709,19 +700,19 @@ if __name__ == '__main__':
             # attention2Mod(pipe)
             # # attention2Orig(pipe)
             if not config.output_type == "latent":
-                latents = latents.to(next(iter(pipe.vae.post_quant_conv.parameters())).dtype)
-                image = pipe.vae.decode(latents / pipe.vae.config.scaling_factor, return_dict=False)[0]
+                # latents = latents.to(next(iter(pipe.vae.post_quant_conv.parameters())).dtype)
+                image = pipe.vae.decode(denoised / pipe.vae.config.scaling_factor, return_dict=False)[0]
                 image, has_nsfw_concept = pipe.run_safety_checker(image, device, latents.dtype)
                 has_nsfw_concept = None
             else:
-                image = latents
+                image = denoised
                 has_nsfw_concept = None
         
             if has_nsfw_concept is None:
                 do_denormalize = [True] * image.shape[0]
             else:
                 do_denormalize = [not has_nsfw for has_nsfw in has_nsfw_concept]
-            image = image[:,:,:global_H,:global_W]
+            # image = image[:,:,:global_H,:global_W]
             image = pipe.image_processor.postprocess(image, output_type=config.output_type, do_denormalize=do_denormalize)
         
     
