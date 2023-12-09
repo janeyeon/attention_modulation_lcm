@@ -38,6 +38,9 @@ def generate_map(
     prev_inst_points = 0
     prev_obj_points = 0
 
+    h_factor  = config.default_H /  global_canvas_H
+    w_factor  = config.default_W / global_canvas_W
+
 
     with torch.no_grad():
         for i, group_idx in enumerate(group_ids):
@@ -45,21 +48,21 @@ def generate_map(
             chosen_group = group_dictionary[str(group_idx)]
             if group_idx == 'non_group_person':
                 group_prompt_dic[i+1] = ''
-                group_map = torch.zeros(1,global_canvas_H, global_canvas_W)
+                group_map = torch.zeros(1,config.default_H, config.default_W)
                 group_maps.append(group_map)
                 group_boxes.append((0,0,0,0))
                 
             else:
-                group_y1 = int(chosen_group['group_bbox']['y']*config.zoom_ratio)
-                group_x1 = int(chosen_group['group_bbox']['x']*config.zoom_ratio)
+                group_y1 = int(chosen_group['group_bbox']['y']*config.zoom_ratio*h_factor)
+                group_x1 = int(chosen_group['group_bbox']['x']*config.zoom_ratio*w_factor)
                 
-                group_H = int(chosen_group['group_bbox']['height']*config.zoom_ratio)
-                group_W = int(chosen_group['group_bbox']['width']*config.zoom_ratio)
+                group_H = int(chosen_group['group_bbox']['height']*config.zoom_ratio*h_factor)
+                group_W = int(chosen_group['group_bbox']['width']*config.zoom_ratio*w_factor)
         
                 group_y2 = group_y1 + group_H
                 group_x2 = group_x1 + group_W
 
-                group_map = torch.zeros(1,global_canvas_H, global_canvas_W)
+                group_map = torch.zeros(1,config.default_H, config.default_W)
                 group_map[0,group_y1:group_y2, group_x1:group_x2] = i+1 # group key
                 group_maps.append(group_map)
         
@@ -71,34 +74,6 @@ def generate_map(
                 # group_prompt_dic[i+1] = group_dictionary['global_caption']
                 group_boxes.append((group_x1,group_y1,group_x2,group_y2))
                 
-                # obj_ids = chosen_group['obj'].keys()
-                # print(f'obj_ids: {obj_ids}')
-                #!##############################################  231107 Remove obj
-                
-                # for j, obj_idx in enumerate(obj_ids):
-                #     # map
-                #     x1 = int(chosen_group['obj'][obj_idx]['x']*config.zoom_ratio)
-                #     y1 = int(chosen_group['obj'][obj_idx]['y']*config.zoom_ratio)
-                #     h = int(chosen_group['obj'][obj_idx]['height']*config.zoom_ratio)
-                #     w = int(chosen_group['obj'][obj_idx]['width']*config.zoom_ratio)
-                #     x2 = x1+w
-                #     y2 = y1+h
-                    
-                #     # Object bbox가 Group bbox를 초과하면 group bbox 확장
-                #     if x1<group_x1:
-                #         group_W = group_W + group_x1-x1
-                #         group_x1 = x1
-                #     if y1<group_y1:
-                #         group_H = group_H + group_y1-y1
-                #         group_y1 = y1
-                        
-                #     if x2>group_x2:
-                #         group_W = group_W + x2-group_x2
-                #         group_x2 = x2
-                #     if y2>group_y2:
-                #         group_H = group_H + y2-group_y2
-                #         group_y2 = y2
-            
                 
                 
         
@@ -135,14 +110,14 @@ def generate_map(
                     print('non_group!!!!!!!!')
                     
                 # map
-                x1 = int(chosen_group['instance'][inst_idx]['x']*config.zoom_ratio)
-                y1 = int(chosen_group['instance'][inst_idx]['y']*config.zoom_ratio)
-                h = int(chosen_group['instance'][inst_idx]['height']*config.zoom_ratio)
-                w = int(chosen_group['instance'][inst_idx]['width']*config.zoom_ratio)
+                x1 = int(chosen_group['instance'][inst_idx]['x']*config.zoom_ratio*w_factor)
+                y1 = int(chosen_group['instance'][inst_idx]['y']*config.zoom_ratio*h_factor)
+                h = int(chosen_group['instance'][inst_idx]['height']*config.zoom_ratio*h_factor)
+                w = int(chosen_group['instance'][inst_idx]['width']*config.zoom_ratio*w_factor)
                 x2 = x1+w
                 y2 = y1+h
 
-                inst_map = torch.zeros(1, global_canvas_H, global_canvas_W, 2)
+                inst_map = torch.zeros(1, config.default_H, config.default_W, 2)
                 inst_map[0,y1:y2, x1:x2,0] = i+1 # group key
                 inst_map[0,y1:y2, x1:x2,1] = j+prev_inst_points+1 # instance key
                 inst_maps.append(inst_map)
@@ -152,8 +127,13 @@ def generate_map(
                 key_data = chosen_group['instance'][inst_idx]['keypoint']
                 pose = PoseResult(body=BodyResult(
                                     keypoints=[
-                                        Keypoint(x=key_data[key_idx * 3]*config.zoom_ratio/global_canvas_W,
-                                                y=key_data[key_idx * 3+1]*config.zoom_ratio/global_canvas_H,
+                                        # Keypoint(x=key_data[key_idx * 3]*config.zoom_ratio/config.default_W,
+                                        #         y=key_data[key_idx * 3+1]*config.zoom_ratio/config.default_H,
+                                        #         score=key_data[key_idx * 3 + 2],
+                                        #         id=key_idx
+                                        #         ) for key_idx in range(18)],
+                                        Keypoint(x=key_data[key_idx * 3]*config.zoom_ratio*w_factor/config.default_W,
+                                                y=key_data[key_idx * 3+1]*config.zoom_ratio*w_factor/config.default_W,
                                                 score=key_data[key_idx * 3 + 2],
                                                 id=key_idx
                                                 ) for key_idx in range(18)],
@@ -164,7 +144,7 @@ def generate_map(
                 poses.append(pose)
                 
                 # pose mask
-                pose_mask = np.zeros((global_canvas_H, global_canvas_W, 3), dtype=np.int32)
+                pose_mask = np.zeros((config.default_H, config.default_W, 3), dtype=np.int32)
                 pose_mask, nose2neck_length = draw_bodyline(pose_mask, pose.body.keypoints, stickwidth_alpha=1., return_nose2neck_length=True)
                 pose_mask = pose_mask.sum(-1)
                 pose_mask[pose_mask>0]=j+1
@@ -204,14 +184,14 @@ def generate_map(
                     print(obj_prompt.replace('.',''))
                     print('obj_prompt!!!!!!!!')
                 # map
-                x1 = int(chosen_group['obj'][obj_idx]['x']*config.zoom_ratio)
-                y1 = int(chosen_group['obj'][obj_idx]['y']*config.zoom_ratio)
-                h = int(chosen_group['obj'][obj_idx]['height']*config.zoom_ratio)
-                w = int(chosen_group['obj'][obj_idx]['width']*config.zoom_ratio)
+                x1 = int(chosen_group['obj'][obj_idx]['x']*config.zoom_ratio*w_factor)
+                y1 = int(chosen_group['obj'][obj_idx]['y']*config.zoom_ratio*h_factor)
+                h = int(chosen_group['obj'][obj_idx]['height']*config.zoom_ratio*h_factor)
+                w = int(chosen_group['obj'][obj_idx]['width']*config.zoom_ratio*w_factor)
                 x2 = x1+w
                 y2 = y1+h
 
-                obj_map = torch.zeros(1,global_canvas_H, global_canvas_W, 2)
+                obj_map = torch.zeros(1,config.default_H, config.default_W, 2)
                 obj_map[0,y1:y2, x1:x2,0] = i+1
                 obj_map[0,y1:y2, x1:x2,1] = j+prev_obj_points+1001
                 obj_maps.append(obj_map)
@@ -225,7 +205,7 @@ def generate_map(
 
 
         ### Total pose map
-        pose_map = np.zeros((global_canvas_H, global_canvas_W, 3), dtype=np.uint8)
+        pose_map = np.zeros((config.default_H, config.default_W, 3), dtype=np.uint8)
         for pose in poses:
             pose_map = draw_bodypose(pose_map, pose.body.keypoints, stickwidth=2)    
         pose_map = HWC3(pose_map)
@@ -245,7 +225,7 @@ def generate_map(
 
 
         group_maps_group_keys = group_maps.amax(dim=(2,3)).unsqueeze(2).unsqueeze(3).long()
-        group_L_maps = F.interpolate(group_maps,(global_canvas_H//8, global_canvas_W//8), mode='nearest').squeeze(1).long()
+        group_L_maps = F.interpolate(group_maps,(config.default_H//8, config.default_W//8), mode='nearest').squeeze(1).long()
 
         for j, k in enumerate(group_maps_group_keys):
             map = group_L_maps[j].clone() 
@@ -264,15 +244,15 @@ def generate_map(
                 
 
         except:
-            obj_maps = torch.zeros(1,global_canvas_H, global_canvas_W, 2)
+            obj_maps = torch.zeros(1,config.default_H, config.default_W, 2)
             obj_sizes = torch.zeros([1])
-            # inst_obj_maps = torch.zeros(1,global_canvas_H, global_canvas_W, 2)
+            # inst_obj_maps = torch.zeros(1,config.default_H, config.default_W, 2)
             # inst_obj_boxes = []
-            # inst_obj_maps_small = torch.zeros(1,global_canvas_H, global_canvas_W, 2)
+            # inst_obj_maps_small = torch.zeros(1,config.default_H, config.default_W, 2)
             # inst_obj_maps_group_keys = torch.zeros([1]).long()
             # inst_obj_maps_instance_keys = torch.zeros([1]).long()
-            # inst_obj_L_maps = F.interpolate(inst_obj_maps.permute(0,3,1,2),(global_canvas_H//8, global_canvas_W//8), mode='nearest').permute(0,2,3,1).long()
-            # inst_obj_L_maps_small = F.interpolate(inst_obj_maps.permute(0,3,1,2),(global_canvas_H//8, global_canvas_W//8), mode='nearest').permute(0,2,3,1).long()
+            # inst_obj_L_maps = F.interpolate(inst_obj_maps.permute(0,3,1,2),(config.default_H//8, config.default_W//8), mode='nearest').permute(0,2,3,1).long()
+            # inst_obj_L_maps_small = F.interpolate(inst_obj_maps.permute(0,3,1,2),(config.default_H//8, config.default_W//8), mode='nearest').permute(0,2,3,1).long()
             # inst_obj_small_L_maps = inst_obj_L_maps_small
             # inst_obj_mix_mask = inst_obj_small_L_maps[:,:,:,0].sum(0).bool().to(torch.uint8)
             # TODO
@@ -287,23 +267,23 @@ def generate_map(
 
         ### Instance object maps
         if config.use_object_size_ordering:
-            inst_obj_maps = torch.cat([obj_maps[small_obj_ids].view(-1,global_canvas_H, global_canvas_W,2),
+            inst_obj_maps = torch.cat([obj_maps[small_obj_ids].view(-1,config.default_H, config.default_W,2),
                                     pose_masked_inst_maps, ########### or inst_maps
-                                    obj_maps[big_obj_ids].view(-1,global_canvas_H, global_canvas_W,2)], dim=0)
+                                    obj_maps[big_obj_ids].view(-1,config.default_H, config.default_W,2)], dim=0)
         
             inst_obj_boxes = np.array(obj_boxes)[small_obj_ids].tolist() + inst_boxes + np.array(obj_boxes)[big_obj_ids].tolist()
         else:
             inst_obj_maps = torch.cat([pose_masked_inst_maps, obj_maps], dim=0)
             inst_obj_boxes = inst_boxes + obj_boxes
 
-        inst_obj_maps_small = torch.cat([obj_maps[small_obj_ids].view(-1,global_canvas_H, global_canvas_W,2),
+        inst_obj_maps_small = torch.cat([obj_maps[small_obj_ids].view(-1,config.default_H, config.default_W,2),
                                     pose_masked_inst_maps], dim=0)
         
         inst_obj_maps_group_keys = inst_obj_maps[:,:,:,0].amax(dim=(1,2)).unsqueeze(1).unsqueeze(2).long()
         inst_obj_maps_instance_keys = inst_obj_maps[:,:,:,1].amax(dim=(1,2)).unsqueeze(1).unsqueeze(2).long()
         #!!!!!!!!!!!!!!!!!!!!!
-        inst_obj_L_maps  = F.interpolate(inst_obj_maps.permute(0,3,1,2),(global_canvas_H//8, global_canvas_W//8), mode='nearest').permute(0,2,3,1).long()
-        inst_obj_L_maps_small =  F.interpolate(inst_obj_maps_small.permute(0,3,1,2),(global_canvas_H//8, global_canvas_W//8), mode='nearest').permute(0,2,3,1).long()
+        inst_obj_L_maps  = F.interpolate(inst_obj_maps.permute(0,3,1,2),(config.default_H//8, config.default_W//8), mode='nearest').permute(0,2,3,1).long()
+        inst_obj_L_maps_small =  F.interpolate(inst_obj_maps_small.permute(0,3,1,2),(config.default_H//8, config.default_W//8), mode='nearest').permute(0,2,3,1).long()
 
         for j, k in enumerate(inst_obj_maps_group_keys):
             map = inst_obj_L_maps[j,:,:,0].clone() 
@@ -330,7 +310,7 @@ def generate_map(
         # Group box 색깔
         
         # print(f'* Global: {global_prompt}')
-        box_map = Image.fromarray(np.zeros((global_canvas_H, global_canvas_W, 3), dtype=np.uint8) + 0)
+        box_map = Image.fromarray(np.zeros((config.default_H, config.default_W, 3), dtype=np.uint8) + 0)
         # print(f'box_map.size = {box_map.size}')
         draw = DashedImageDraw(box_map)
         print()

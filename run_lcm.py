@@ -37,7 +37,6 @@ from _load_model import *
 from _generate_map import *
 from _preprocess_patch import *
 from gd import *
-from total_list import *
 
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin, TextualInversionLoaderMixin
@@ -468,7 +467,7 @@ if __name__ == '__main__':
                 )
 
 
-    views = get_views(global_canvas_H, global_canvas_W, window_size=config.window_size, stride=config.stride, circular_padding=False)
+    views = get_views(config.default_H, config.default_W, window_size=config.window_size, stride=config.stride, circular_padding=False)
 
     # attention2Mod(pipe)
 
@@ -508,8 +507,8 @@ if __name__ == '__main__':
         latents = pipe.prepare_latents(
             batch_size,
             num_channels_latents,
-            global_canvas_H,
-            global_canvas_W,
+            config.default_H,
+            config.default_W,
             global_prompt_embeds.dtype,
             device,
             config.generator,
@@ -521,7 +520,7 @@ if __name__ == '__main__':
         
         ### 3-1. Prepare black latent variables
 
-        pad_image = torch.ones((1, 3, global_canvas_H, global_canvas_W))*255 # global_canvas_H, global_canvas_W 사이즈의 흰색 이미지를 생성 
+        pad_image = torch.ones((1, 3, config.default_H, config.default_W))*255 # global_canvas_H, global_canvas_W 사이즈의 흰색 이미지를 생성 
         pad_image = pipe.image_processor.preprocess(pad_image)
         pad_image = pad_image.to(next(iter(pipe.vae.post_quant_conv.parameters())).dtype).to(device)
         pad_latents = pipe.vae.encode(pad_image).latent_dist.mean
@@ -573,8 +572,8 @@ if __name__ == '__main__':
                                         inst_obj_L_maps_small,
                                         group_prompt_dic,
                                         inst_obj_prompt_dic,
-                                        global_canvas_H,
-                                        global_canvas_W,
+                                        config.default_H,
+                                        config.default_W,
                                         global_prompt,
                                         bsz,
                                         views, 
