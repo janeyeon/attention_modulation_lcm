@@ -109,8 +109,8 @@ class RunConfig:
     # Config for diffusion model
     height = None
     width = None
-    num_inference_steps = 50
-    # num_inference_steps = 4
+    # num_inference_steps = 50
+    num_inference_steps = 4
     guidance_scale = 7.5
     negative_prompt = "anime, cartoon, graphic, text, painting, crayon, graphite, abstract, glitch, deformed, mutated, ugly, disfigured"
     num_images_per_prompt= 1
