@@ -355,13 +355,13 @@ if __name__ == '__main__':
         hidden_states = hidden_states / self.rescale_output_factor
 
 
-        img_sim = hidden_states
-        print(f"attention_probs: {hidden_states.shape}")
-        img = img_sim * 255 / hidden_states.min()
-        img = torch.mean(img, dim=0).detach().cpu().numpy() *255
-        im  = Image.fromarray(img.astype(np.uint8))
-        im.save(f"attn_image.png")
-
+        # img_sim = hidden_states
+        # print(f"attention_probs: {hidden_states.shape}")
+        # img = img_sim * 255 / hidden_states.min()
+        # img = torch.mean(img, dim=0).detach().cpu().numpy() *255
+        # im  = Image.fromarray(img.astype(np.uint8))
+        # im.save(f"attn_image.png")
+ 
 
         return hidden_states
 
