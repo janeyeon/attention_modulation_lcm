@@ -278,7 +278,6 @@ if __name__ == '__main__':
         key = self.head_to_batch_dim(key)
         value = self.head_to_batch_dim(value)
 
-
         if encoder_hidden_states is not None:
             key  =   key[key.size(0)//2:,  ...]
             value  =  value[value.size(0)//2:,  ...]
@@ -293,13 +292,14 @@ if __name__ == '__main__':
                 key = key.float()
             
                 # query  =  torch.concat([query, query], dim=0)
-            # print(f"query: {query.shape}, key: {key.shape}")
             sim = torch.baddbmm(torch.empty(query.shape[0], query.shape[1], key.shape[1], 
                                             dtype=query.dtype, device=query.device),
                                 query, key.transpose(-1, -2), beta=0, alpha=self.scale)
             
+
+            
             # treg = torch.pow(timesteps[COUNT]/1000, 5)
-            treg = torch.pow(timesteps[COUNT]/1000, 10)
+            treg = torch.pow(timesteps[COUNT]/1000, 15)
 
 
             ## reg at self-attn
@@ -309,7 +309,7 @@ if __name__ == '__main__':
                 
                 mask = sreg_maps[sim.size(1)].repeat(int(self.heads/2),1,1)
                 size_reg = reg_sizes[sim.size(1)].repeat(int(self.heads/2),1,1)
-                # print(f" sim: {sim.shape},  mask: {mask.shape}, size_reg: {size_reg.shape}, sreg: {sreg}, treg: {treg} max_value: {max_value.shape}, sim[int(sim.size(0)/2):]: {sim[int(sim.size(0)/2):].shape} ") 
+                # print(f" self  size_reg: {size_reg.shape}, sreg: {sreg}, treg: {treg} max_value: {max_value.shape}, sim[int(sim.size(0)/2):]: {sim[int(sim.size(0)/2):].shape} ") 
 
                 sim[int(sim.size(0)/2):] += (mask>0)*size_reg*sreg*treg*(max_value-sim[int(sim.size(0)/2):])
                 sim[int(sim.size(0)/2):] -= ~(mask>0)*size_reg*sreg*treg*(sim[int(sim.size(0)/2):]-min_value)
@@ -323,35 +323,19 @@ if __name__ == '__main__':
                 
                 mask = creg_maps[sim.size(1)].repeat(int(self.heads/2),1,1)
                 size_reg = reg_sizes[sim.size(1)].repeat(int(self.heads/2),1,1)
-                # print(f" sim: {sim.shape},  mask: {mask.shape}, size_reg: {size_reg.shape}, sreg: {sreg}, treg: {treg} max_value: {max_value.shape}, sim[int(sim.size(0)/2):]: {sim[int(sim.size(0)/2):].shape} ") 
+                # print(f" cross size_reg: {size_reg.shape}, sreg: {sreg}, treg: {treg} max_value: {max_value.shape}, sim[int(sim.size(0)/2):]: {sim[int(sim.size(0)/2):].shape} ") 
 
                 sim[int(sim.size(0)/2):] += (mask>0)*size_reg*creg*treg*(max_value-sim[int(sim.size(0)/2):])
                 sim[int(sim.size(0)/2):] -= ~(mask>0)*size_reg*creg*treg*(sim[int(sim.size(0)/2):]-min_value)
             
-            
-            # if encoder_hidden_states is not None:
-            #     min_value = sim[int(sim.size(0)/2):].min(-1)[0].unsqueeze(-1)
-            #     max_value = sim[int(sim.size(0)/2):].max(-1)[0].unsqueeze(-1) 
-            #     # mask = sreg_maps[sim.size(1)].repeat(self.heads,1,1)
-            #     # size_reg = reg_sizes[sim.size(1)].repeat(self.heads,1,1)
-            #     mask = creg_maps[sim.size(1)].repeat(int(self.heads/2),1,1)
-            #     size_reg = reg_sizes[sim.size(1)].repeat(int(self.heads/2),1,1)
-            #     # print(f" sim: {sim.shape},  mask: {mask.shape}, size_reg: {size_reg.shape}, sreg: {sreg}, treg: {treg} max_value: {max_value.shape}, sim[int(sim.size(0)/2):]: {sim[int(sim.size(0)/2):].shape} ") 
-
-            #     sim[int(sim.size(0)/2):] += (mask>0)*size_reg*creg*treg*(max_value-sim[int(sim.size(0)/2):])
-            #     sim[int(sim.size(0)/2):] -= ~(mask>0)*size_reg*creg*treg*(sim[int(sim.size(0)/2):]-min_value)
-                
-            
-            
-            
             attention_probs = sim.softmax(dim=-1)
             attention_probs = attention_probs.to(dtype)
-        
+
+           
 
         else:
             # print('No')
             attention_probs = self.get_attention_scores(query, key, attention_mask)
-            
         hidden_states = torch.bmm(attention_probs, value)
         hidden_states = self.batch_to_head_dim(hidden_states)
         
@@ -364,9 +348,20 @@ if __name__ == '__main__':
             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
         if self.residual_connection:
             hidden_states = hidden_states + residual
+
+        
             
 
         hidden_states = hidden_states / self.rescale_output_factor
+
+
+        img_sim = hidden_states
+        print(f"attention_probs: {hidden_states.shape}")
+        img = img_sim * 255 / hidden_states.min()
+        img = torch.mean(img, dim=0).detach().cpu().numpy() *255
+        im  = Image.fromarray(img.astype(np.uint8))
+        im.save(f"attn_image.png")
+
 
         return hidden_states
 
@@ -469,7 +464,7 @@ if __name__ == '__main__':
 
     views = get_views(config.default_H, config.default_W, window_size=config.window_size, stride=config.stride, circular_padding=False)
 
-    # attention2Mod(pipe)
+    attention2Mod(pipe)
 
     with torch.no_grad():
         ### 0. Loading
@@ -499,7 +494,7 @@ if __name__ == '__main__':
         pipe.scheduler.set_timesteps(config.num_inference_steps, lcm_origin_steps= config.lcm_origin_steps)
         num_channels_latents = pipe.unet.config.in_channels
 
-        # attention2Orig(pipe, mod_forward_orig)
+        attention2Orig(pipe, mod_forward_orig)
 
         # normal에서는 false
         timesteps = pipe.scheduler.timesteps
@@ -526,7 +521,7 @@ if __name__ == '__main__':
         pad_latents = pipe.vae.encode(pad_image).latent_dist.mean
         pad_latents = (pipe.vae.config.scaling_factor * pad_latents).to(latents.dtype)
 
-        # attention2Mod(pipe)
+        attention2Mod(pipe)
 
         
         # 4. Define panorama grid and initialize views for synthesis.
@@ -552,7 +547,7 @@ if __name__ == '__main__':
                 # NUM_GROUPS = len(view_batch)
                 NUM_GROUPS = len(views)
 
-                # attention2Mod(pipe)
+                attention2Mod(pipe)
 
                 # for j, batch_view in enumerate(view_batch):
                 for view_index, batch_view in enumerate(views):
@@ -697,8 +692,8 @@ if __name__ == '__main__':
                 COUNT += 1
             
 
-            # attention2Mod(pipe)
-            # # attention2Orig(pipe)
+            attention2Mod(pipe)
+            # attention2Orig(pipe)
             if not config.output_type == "latent":
                 # latents = latents.to(next(iter(pipe.vae.post_quant_conv.parameters())).dtype)
                 image = pipe.vae.decode(denoised / pipe.vae.config.scaling_factor, return_dict=False)[0]

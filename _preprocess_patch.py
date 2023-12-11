@@ -375,13 +375,22 @@ def preprocess_patch(pipe,
             # sreg_maps, reg_sizes
             sreg_maps = {}
             reg_sizes = {}
+            print(f"layouts: {layouts.shape}")
             for r in range(4):
                 res1, res2 = int(view_H/np.power(2,r)), int(view_W/np.power(2,r))
                 layouts_s = F.interpolate(layouts,(res1, res2),mode='nearest').to(config.device)
                 layouts_s = (layouts_s.view(layouts_s.size(0),1,-1)*layouts_s.view(layouts_s.size(0),-1,1)).sum(0).unsqueeze(0).repeat(1,1,1)
                 reg_sizes[res1*res2] = 1-1.*layouts_s.sum(-1, keepdim=True)/(res1*res2)
                 sreg_maps[res1*res2] = layouts_s
+                # imgage = layouts_s[0].detach().cpu().numpy()
+                # im  = Image.fromarray(imgage*255)
+                # im.save(f"layout_s_{r}.png")
 
+            for i in range(len(layouts)):
+                imgage = layouts[i].detach().cpu().numpy()
+                im  = Image.fromarray(imgage[0]*255)
+                im.save(f"image_{i}.png")
+            
             sreg_maps_for_view_multi.append(sreg_maps)
             reg_sizes_for_view_multi.append(reg_sizes)
 

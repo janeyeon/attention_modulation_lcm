@@ -38,8 +38,8 @@ def generate_map(
     prev_inst_points = 0
     prev_obj_points = 0
 
-    h_factor  = config.default_H /  global_canvas_H
-    w_factor  = config.default_W / global_canvas_W
+    h_factor  = config.default_H * 1.2/  global_canvas_H
+    w_factor  = config.default_W * 1.2/ global_canvas_W
 
 
     with torch.no_grad():
