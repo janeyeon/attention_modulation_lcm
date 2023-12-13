@@ -103,8 +103,8 @@ class RunConfig:
         # img2img_input_path = config.output_path / f'results_group_focus.png'
 
     seed = 923845
-    default_H = 512
-    default_W = 512
+    default_H = 768
+    default_W = 768
     
     # Config for diffusion model
     height = None

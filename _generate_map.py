@@ -17,7 +17,7 @@ def generate_map(
         group_ids,
         group_dictionary,
         image_idx
-        ):
+    ):
     
     group_maps = []
     inst_maps = []
@@ -38,8 +38,8 @@ def generate_map(
     prev_inst_points = 0
     prev_obj_points = 0
 
-    h_factor  = config.default_H * 1.2/  global_canvas_H
-    w_factor  = config.default_W * 1.2/ global_canvas_W
+    h_factor  = config.default_H / global_canvas_H
+    w_factor  = config.default_W / global_canvas_W
 
 
     with torch.no_grad():
@@ -88,15 +88,6 @@ def generate_map(
                 else:
                     inst_prompt = chosen_group['instance'][inst_idx]['caption']
 
-                inst_prefix = None
-                if "girl" in inst_prompt:
-                    inst_prefix = "beautiful "
-                elif "woman" in inst_prompt:
-                    inst_prefix = "beautiful "
-                elif "man" or "men" in inst_prompt:
-                    inst_prefix = "handsome "
-                elif "boy" in inst_prompt:
-                    inst_prefix = "handsome "
 
                 inst_prompt = inst_prompt.replace('.','')
                 article = "" if len(inst_prompt) > 1 else "a "

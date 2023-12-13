@@ -446,7 +446,6 @@ def preprocess_patch(pipe,
         # print(f'exceed_cnt: {exceed_cnt}')
         # print(f'len(views): {len(views)}')
         # print(f"full_prompt_for_view_multi: {full_prompt_for_view_multi}")
-        # print(f"prompts_for_view_multi: {prompts_for_view_multi}")
 
         return full_prompt_for_view_multi,\
                 prompts_for_view_multi,\
