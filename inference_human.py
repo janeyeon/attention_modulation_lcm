@@ -78,7 +78,7 @@ if __name__ == '__main__':
     #get human centric dataset 
     input_temp, output_temp = return_temp(image_idx)
     group_dictionary = makeGroupdict_custom(input_temp, output_temp)
-
+    config.output_path = config.output_path /  image_idx
 
 
     
@@ -435,14 +435,14 @@ if __name__ == '__main__':
         time_hash = datetime.datetime.now().time()
         hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
         # save_path = f'./outputs/{idx:02}/'
-        save_path = config.output_path /  image_idx
+        save_path = config.output_path 
         os.makedirs(save_path, exist_ok=True)
 
         for i, img in enumerate(imgs):
             img_name = f'{args.model}_{args.num_inference_steps}steps_idx{idx:>02}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_{args.wo_modulation*"_woModulation"}_{hash_key}_{i}.png'
             if img.size[0] > 512:
                 img = img.resize((512,512)) # in order to compare LCM with SD
-            img.save(str(save_path)+img_name)
+            img.save(str(save_path)+'/'+img_name)
         
         return attn_stores
 

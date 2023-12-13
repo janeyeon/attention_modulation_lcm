@@ -38,8 +38,10 @@ def generate_map(
     prev_inst_points = 0
     prev_obj_points = 0
 
-    h_factor  = config.default_H / global_canvas_H
-    w_factor  = config.default_W / global_canvas_W
+    # h_factor  = config.default_H / global_canvas_H
+    # w_factor  = config.default_W / global_canvas_W
+    h_factor  = 1
+    w_factor  = 1
 
 
     with torch.no_grad():
@@ -202,6 +204,11 @@ def generate_map(
         pose_map = HWC3(pose_map)
         pose_map_pil = Image.fromarray(pose_map)
         pose_masks = torch.cat(pose_masks, dim=0)
+        #!!!!!!!!!!!!!!!!!!!!!!!
+        for idx, pose_mask in enumerate(pose_masks):
+            pose_mask = pose_mask.to(torch.uint8).numpy()
+            save_pose = Image.fromarray(pose_mask*255)
+            save_pose.save(config.output_path / f'Pose_{idx}.png')
 
         ### Group ordering according to the size
         group_maps = torch.cat(group_maps,dim=0).unsqueeze(1) 
