@@ -20,6 +20,22 @@ from diffusers import DDIMScheduler, LCMScheduler
 import transformers
 from transformers import CLIPTextModel, CLIPTokenizer
 
+"""
+Example usage
+
+- Basic usage
+python inference_densediff.py --model SD --batch_size 1 -s 50 -idx 1 (-s = num inference steps)
+python inference_densediff.py --model LCM --batch_size 1 -s 4 -idx 1
+
+- Change dense diffusion parameters
+python inference_densediff.py --model LCM --batch_size 1 -s 16 --reg_part 0.5 --creg 1.5 --sreg 0.5 --pow_time 3 --idx 1
+
+- Generate images for multiple indices
+python inference_densediff.py --model LCM --batch_size 1 -s 16 --idx 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+
+- Generate without dense diffusion (add -w argument)
+python inference_densediff.py --model LCM --batch_size 1 -s 16 -w -idx 1 
+"""
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -46,7 +62,6 @@ if __name__ == '__main__':
     
     ## Load Model
     if args.model == 'LCM':
-        print("model = LCM")
         pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7")
         pipe.to(device=device, dtype=torch.float32)
         num_inference_steps = num_inference_steps
@@ -56,7 +71,6 @@ if __name__ == '__main__':
                                      original_inference_steps=lcm_origin_steps,
                                      device=device)
     else:
-        print("model = Stable Diffusion v1.5")
         pipe = diffusers.StableDiffusionPipeline.from_pretrained(
             "runwayml/stable-diffusion-v1-5",
             safety_checker=None,
