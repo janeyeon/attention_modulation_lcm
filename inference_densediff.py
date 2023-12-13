@@ -20,8 +20,8 @@ from diffusers import DDIMScheduler, LCMScheduler
 import transformers
 from transformers import CLIPTextModel, CLIPTokenizer
 
+
 if __name__ == '__main__':
-    
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='LCM', choices=['LCM', 'SD'])
     parser.add_argument('--batch_size', type=int, default=1)
@@ -37,9 +37,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug', type=str)
     args = parser.parse_args()
     
-    print(args.idx)
     ## Set hyperparameters
-    
     device= "cuda:0"
     num_inference_steps = args.num_inference_steps 
     reg_part = args.reg_part
@@ -57,7 +55,6 @@ if __name__ == '__main__':
         pipe.scheduler.set_timesteps(num_inference_steps=num_inference_steps,
                                      original_inference_steps=lcm_origin_steps,
                                      device=device)
-        timestep_divider = 32
     else:
         print("model = Stable Diffusion v1.5")
         pipe = diffusers.StableDiffusionPipeline.from_pretrained(
@@ -68,20 +65,9 @@ if __name__ == '__main__':
         ).to(device)
         pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
         pipe.scheduler.set_timesteps(num_inference_steps)
-        timestep_divider = 32
-    
-    if args.debug:
-        print("model = Stable Diffusion v1.5")
-        sd_pipe = diffusers.StableDiffusionPipeline.from_pretrained(
-            "runwayml/stable-diffusion-v1-5",
-            safety_checker=None,
-            variant="fp16",
-            cache_dir='./models/diffusers/'
-        ).to(device)
-        sd_pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
-        sd_pipe.scheduler.set_timesteps(num_inference_steps)
     
     ## Set attn modulation variables
+    num_attn_layers = 32
     timesteps = pipe.scheduler.timesteps
     print(timesteps)
     sp_sz = pipe.unet.sample_size
@@ -90,8 +76,15 @@ if __name__ == '__main__':
     
     mod_counts = []
     
+    print("=== Experiment Settings ===")
+    print("- Model:", args.model, "N inference steps:", num_inference_steps, "/ Batch size:", bsz)
+    print("- Regulation part:", reg_part, "/ Self attention regulation:", sreg, "/ Cross attention regulation:", creg, "/ Time regulation:", args.pow_time)
+    print("Chosen timesteps:", timesteps)
+    
     ## attention modulation function
     def mod_forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None):
+        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond
+        
         residual = hidden_states 
         
         if self.spatial_norm is not None:
@@ -127,8 +120,7 @@ if __name__ == '__main__':
             value = value[value.size(0)//2:,  ...]
             
         #################################################
-        global COUNT
-        if COUNT/timestep_divider < num_inference_steps*reg_part:
+        if COUNT/num_attn_layers < num_inference_steps*reg_part:
             mod_counts.append(COUNT)
             dtype = query.dtype
             if self.upcast_attention:
@@ -141,7 +133,7 @@ if __name__ == '__main__':
             
 
             try:
-                treg = torch.pow(timesteps[COUNT//timestep_divider]/1000, args.pow_time)
+                treg = torch.pow(timesteps[COUNT//num_attn_layers]/1000, args.pow_time)
             except:
                 treg=torch.pow(timesteps[-1]/1000, args.pow_time)
             
@@ -197,6 +189,8 @@ if __name__ == '__main__':
     layout_img_root = './dataset/valset_layout/'
     
     def generate_index_img(idx):
+        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond
+        
         layout_img_path = layout_img_root+str(idx)+'.png'
         prompts = [dataset[idx]['textual_condition']] + dataset[idx]['segment_descriptions']
 
@@ -277,7 +271,6 @@ if __name__ == '__main__':
         ###########################
         text_cond = torch.cat([uncond_embeddings, cond_embeddings[:1].repeat(bsz,1,1)])
 
-
         ## generate images
         COUNT = 0
         with torch.no_grad():
@@ -304,4 +297,5 @@ if __name__ == '__main__':
             img.save(save_path+img_name)
 
     for i in args.idx:
+        print(f"=== Generate image for index {i} ===")
         generate_index_img(i)
