@@ -244,6 +244,8 @@ if __name__ == '__main__':
         layout_img_ = np.asarray(Image.open(layout_img_path).resize([sp_sz*8,sp_sz*8]))[:,:,:3]
         print(f"layout_img_: {layout_img_.shape}, {layout_img_.dtype}")
         print(f"min : {[channel.min() for channel in layout_img_]}")
+        
+        
         unique, counts = np.unique(np.reshape(layout_img_,(-1,3)), axis=0, return_counts=True)
         sorted_idx = np.argsort(-counts)
 

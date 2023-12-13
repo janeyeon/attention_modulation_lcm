@@ -320,9 +320,9 @@ if __name__ == '__main__':
 
         prompts = prompts_for_view_multi[0]
         print(f"prompts: {prompts}")
-        layout_img_ = pose_masks.permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
-        print(f"pose_masks: {layout_img_.shape} {layout_img_.dtype}")
-        layout_num = layout_img_.shape[-1]
+        # layout_img_ = pose_masks.permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
+        # print(f"pose_masks: {layout_img_.shape} {layout_img_.dtype}")
+        layout_num = len(prompts)-1
         ## prepare text condition embeddings
         ############
         text_input = pipe.tokenizer(prompts, padding="max_length", return_length=True, return_overflowing_tokens=False, 
@@ -348,7 +348,9 @@ if __name__ == '__main__':
 
         ## set layout image masks
         ############
-
+        layout_img_ = np.asarray(Image.open(str(config.output_path) + "/save_pose.png").resize([sp_sz*8,sp_sz*8]))
+        layout_img_ = np.stack([layout_img_, layout_img_, layout_img_], axis=-1)
+        print(f"  layout_img_: {layout_img_.shape}")
         # layout_img_ = np.asarray(Image.open(layout_img_path).resize([sp_sz*8,sp_sz*8]))[:,:,:3]
 
         unique, counts = np.unique(np.reshape(layout_img_,(-1,layout_num)), axis=0, return_counts=True)
@@ -364,7 +366,7 @@ if __name__ == '__main__':
 
         layouts = [torch.FloatTensor(l).unsqueeze(0).unsqueeze(0).cuda() for l in layouts_]
         layouts = F.interpolate(torch.cat(layouts),(sp_sz,sp_sz),mode='nearest')
-
+        print(f"layouts: {layouts.shape}")
         ############
         print('\n'.join(prompts))
         Image.fromarray(np.concatenate([255*_.squeeze().cpu().numpy() for _ in layouts], 1).astype(np.uint8))

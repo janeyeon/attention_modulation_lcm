@@ -205,10 +205,14 @@ def generate_map(
         pose_map_pil = Image.fromarray(pose_map)
         pose_masks = torch.cat(pose_masks, dim=0)
         #!!!!!!!!!!!!!!!!!!!!!!!
+        save_img = np.zeros_like(pose_masks[0])
         for idx, pose_mask in enumerate(pose_masks):
-            pose_mask = pose_mask.to(torch.uint8).numpy()
-            save_pose = Image.fromarray(pose_mask*255)
-            save_pose.save(config.output_path / f'Pose_{idx}.png')
+            select_color = random.randint(0, 255)
+            save_img[pose_mask>0] = select_color
+        
+        save_img = save_img.astype(np.uint8)
+        save_pose = Image.fromarray(save_img*255)
+        save_pose.save(config.output_path / f'save_pose.png')
 
         ### Group ordering according to the size
         group_maps = torch.cat(group_maps,dim=0).unsqueeze(1) 
