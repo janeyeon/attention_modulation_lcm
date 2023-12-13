@@ -53,17 +53,19 @@ if __name__ == '__main__':
     parser.add_argument('--debug', type=str)
     args = parser.parse_args()
     
+    
     ## Set hyperparameters
-    device= "cuda:0"
+    device= "cuda"
     num_inference_steps = args.num_inference_steps 
-    reg_part = args.reg_part
+    reg_part = args.reg_part if not args.wo_modulation else 0
     sreg = args.sreg
     creg = args.creg
+
     
     ## Load Model
     if args.model == 'LCM':
         pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7")
-        pipe.to(device=device, dtype=torch.float32)
+        pipe.to(device=device, dtype=torch.float16)
         num_inference_steps = num_inference_steps
         lcm_origin_steps = 50
         pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
@@ -79,28 +81,34 @@ if __name__ == '__main__':
         ).to(device)
         pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
         pipe.scheduler.set_timesteps(num_inference_steps)
-    
+
+        
     ## Set attn modulation variables
     num_attn_layers = 32
     timesteps = pipe.scheduler.timesteps
-    print(timesteps)
     sp_sz = pipe.unet.sample_size
     bsz = args.batch_size
     idx = args.idx
-    
+
     mod_counts = []
-    
+
     print("=== Experiment Settings ===")
-    print("- Model:", args.model, "N inference steps:", num_inference_steps, "/ Batch size:", bsz)
+    print("- Model:", args.model, "/ N inference steps:", num_inference_steps, "/ Batch size:", bsz)
     print("- Regulation part:", reg_part, "/ Self attention regulation:", sreg, "/ Cross attention regulation:", creg, "/ Time regulation:", args.pow_time)
     print("Chosen timesteps:", timesteps)
+
     
     ## attention modulation function
     def mod_forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None):
-        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond
-        
+        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
+        STEP = COUNT // 32
+        if COUNT % 32 == 0 and STEP > 0:
+            attn_stores.append(step_store)
+            step_store = {"down_cross": [], "mid_cross": [], "up_cross": [],
+                          "down_self": [],  "mid_self": [],  "up_self": []}
+
         residual = hidden_states 
-        
+
         if self.spatial_norm is not None:
             hidden_states = self.spatial_norm(hidden_states, temb)
 
@@ -129,50 +137,46 @@ if __name__ == '__main__':
         query = self.head_to_batch_dim(query)
         key = self.head_to_batch_dim(key)
         value = self.head_to_batch_dim(value)
+
         if sa_ == False and args.model == 'LCM':
             key =  key[key.size(0)//2:,  ...]
             value = value[value.size(0)//2:,  ...]
-            
-        #################################################
-        if COUNT/num_attn_layers < num_inference_steps*reg_part:
+
+        # modulate attention with dense diffusion
+        if (COUNT/num_attn_layers < num_inference_steps*reg_part):
             mod_counts.append(COUNT)
             dtype = query.dtype
             if self.upcast_attention:
                 query = query.float()
                 key = key.float()
-                
+
             sim = torch.baddbmm(torch.empty(query.shape[0], query.shape[1], key.shape[1], 
                                             dtype=query.dtype, device=query.device),
                                 query, key.transpose(-1, -2), beta=0, alpha=self.scale)
-            
-
-            try:
-                treg = torch.pow(timesteps[COUNT//num_attn_layers]/1000, args.pow_time)
-            except:
-                treg=torch.pow(timesteps[-1]/1000, args.pow_time)
-            
+            treg = torch.pow(timesteps[COUNT//num_attn_layers]/1000, args.pow_time)
             reg_map = sreg_maps if sa_ else creg_maps
             w_reg = sreg if sa_ else creg
-            
+
             # manipulate attention
             batch_idx = int(sim.size(0)/2) if args.model != 'LCM' else 0 # why do we have to apply below operations for latter half of sim???
             min_value = sim[batch_idx:].min(-1)[0].unsqueeze(-1)
             max_value = sim[batch_idx:].max(-1)[0].unsqueeze(-1)  
             mask = reg_map[sim.size(1)].repeat(self.heads,1,1)
             size_reg = reg_sizes[sim.size(1)].repeat(self.heads,1,1)
-            
+
             sim[batch_idx:] += (mask>0)*size_reg*w_reg*treg*(max_value-sim[batch_idx:])
             sim[batch_idx:] -= ~(mask>0)*size_reg*w_reg*treg*(sim[batch_idx:]-min_value)
-                
+
             attention_probs = sim.softmax(dim=-1)
             attention_probs = attention_probs.to(dtype)
-
-        else:
+        else: # get original attention
             attention_probs = self.get_attention_scores(query, key, attention_mask)
 
         COUNT += 1
-        #################################################        
+        if attention_probs.shape[1] <= 32 ** 2: # save attention in each place(up, down, mid) when attention shape is small
+            step_store[f"{self.place_in_unet.lower()}_{'self' if sa_ else 'cross'}"].append(attention_probs)
 
+        #################################################        
         hidden_states = torch.bmm(attention_probs, value)
         hidden_states = self.batch_to_head_dim(hidden_states)
 
@@ -190,21 +194,31 @@ if __name__ == '__main__':
         hidden_states = hidden_states / self.rescale_output_factor
 
         return hidden_states
-    
-    ## change call function of attn layers in Unet when args.wo_modulation is off
-    if args.wo_modulation == False:
-        for _module in pipe.unet.modules():
-            if _module.__class__.__name__ == "Attention":
-                _module.__class__.__call__ = mod_forward
 
+    
+    ## change call function of attn layers in Unet 
+    for _module in pipe.unet.modules():
+        n = _module.__class__.__name__
+        if 'CrossAttn' in n:
+            for place in ['Up', 'Down', 'Mid']:
+                if place in n:
+                    curr_place = place
+
+        if n == "Attention":
+            _module.__class__.__call__ = mod_forward
+            _module.place_in_unet = curr_place
+
+            
     ## Load naver-ai/DenseDiffusion dataset
     with open('./dataset/valset.pkl', 'rb') as f:
         dataset = pickle.load(f)
     layout_img_root = './dataset/valset_layout/'
+
     
+    ## Main function which generates modulated image
     def generate_index_img(idx):
-        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond
-        
+        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
+
         layout_img_path = layout_img_root+str(idx)+'.png'
         prompts = [dataset[idx]['textual_condition']] + dataset[idx]['segment_descriptions']
 
@@ -287,19 +301,27 @@ if __name__ == '__main__':
 
         ## generate images
         COUNT = 0
+        attn_stores = []
+        step_store = {"down_cross": [], "mid_cross": [], "up_cross": [],
+                      "down_self": [],  "mid_self": [],  "up_self": []}
+
         with torch.no_grad():
-        #     latents = torch.randn(bsz,1,sp_sz,sp_sz).to(device)
             latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(1)).to(device) 
             if args.model == 'LCM':
-                image = pipe(prompts[:1]*bsz, latents=latents,
-                             num_inference_steps=num_inference_steps,
-                             lcm_origin_steps=lcm_origin_steps,
-                             guidance_scale=8.0).images
+                with torch.autocast('cuda'):
+                    image = pipe(prompts[:1]*bsz, latents=latents,
+                                 num_inference_steps=num_inference_steps,
+                                 lcm_origin_steps=lcm_origin_steps,
+                                 guidance_scale=8.0).images
             else:
                 image = pipe(prompts[:1]*bsz, latents=latents).images
 
         imgs = [ Image.fromarray(np.asarray(image[i])) for i in range(len(image)) ]
-
+        if imgs[0].size[0] > 512:
+            imgs = [ x.resize((512,512)) for x in imgs ]
+        if args.debug:
+            return
+        
         ## save images
         time_hash = datetime.datetime.now().time()
         hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
@@ -308,8 +330,16 @@ if __name__ == '__main__':
 
         for i, img in enumerate(imgs):
             img_name = f'{args.model}_{args.num_inference_steps}steps_idx{idx:>02}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_{args.wo_modulation*"_woModulation"}_{hash_key}_{i}.png'
+            if img.size[0] > 512:
+                img = img.resize((512,512)) # in order to compare LCM with SD
             img.save(save_path+img_name)
-
+        
+        return attn_stores
+            
+    ## Generate images for given indices  
+    attn_indices = dict()
     for i in args.idx:
         print(f"=== Generate image for index {i} ===")
-        generate_index_img(i)
+        attn_indices[i] = generate_index_img(i)
+    
+    pdb.set_trace()
