@@ -29,6 +29,7 @@ from _generate_map_human import *
 from _generate_map import *
 from _preprocess_patch import *
 from gd import *
+from attention import *
 from dataset.total_list import *
 
 """
@@ -63,6 +64,7 @@ if __name__ == '__main__':
                         help='when True, run inference without dense diffusion attention manipulation')
     parser.add_argument('--debug', type=str)
     parser.add_argument('--key', type=str)
+    parser.add_argument('--attention', type=bool, default=True)
     args = parser.parse_args()
     
     
@@ -126,6 +128,7 @@ if __name__ == '__main__':
     def mod_forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None):
         global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
         STEP = COUNT // 32
+
         if COUNT % 32 == 0 and STEP > 0:
             attn_stores.append(step_store)
             step_store = {"down_cross": [], "mid_cross": [], "up_cross": [],
@@ -255,7 +258,7 @@ if __name__ == '__main__':
                     image_idx=image_idx
                     )
         
-       
+        prompts_idx[idx] = prompt_wanted[0]
         prompts = prompt_wanted
         layout_num = 3
         ## prepare text condition embeddings
@@ -356,8 +359,9 @@ if __name__ == '__main__':
         imgs = [ Image.fromarray(np.asarray(image[i])) for i in range(len(image)) ]
         if imgs[0].size[0] > 512:
             imgs = [ x.resize((512,512)) for x in imgs ]
-        if args.debug:
-            return
+        
+        imgs_idx[idx] = imgs
+        attentions_idx[idx] = attn_stores
         
         ## save images
         time_hash = datetime.datetime.now().time()
@@ -372,13 +376,17 @@ if __name__ == '__main__':
                 img = img.resize((512,512)) # in order to compare LCM with SD
             img.save(str(save_path)+'/'+img_name)
         
-        return attn_stores
+        # return attn_stores
 
    
     ## Generate images for given indices  
-    attn_indices = dict()
+    imgs_idx = dict()
+    prompts_idx = dict()
+    attentions_idx = dict()
     for i in args.idx:
         print(f"=== Generate image for index {i} ===")
-        attn_indices[i] = generate_index_img(i)
-    
+        generate_index_img(i)
+        if args.attention: 
+            cas, sas = get_attention_timesteps(pipe, attentions_idx[i], prompts_idx[i], 24, ['down','up'], 0, 2)
+            save_images_into_one(cas, config)
     # pdb.set_trace()

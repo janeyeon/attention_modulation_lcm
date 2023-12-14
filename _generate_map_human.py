@@ -302,14 +302,7 @@ def generate_map_human(
         inst_obj_small_L_maps = inst_obj_L_maps_small
         inst_obj_mix_mask = inst_obj_small_L_maps[:,:,:,0].sum(0).bool().to(torch.uint8)
 
-        # obj_maps = torch.cat(obj_maps, dim=0)
-        # pose_masks = torch.cat(pose_masks, dim=0)
         
-
-        
-        # obj_sizes = obj_maps[:,:,:,0].clone().bool().to(torch.uint8).sum(-1).sum(-1)
-        
-
         ### Visualization 
         ### TODO
         # Obj Inst는 Group idx
