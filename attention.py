@@ -114,7 +114,7 @@ def get_attention_timesteps(pipe, attention_store_timestep, prompts, res, from_w
 
 
 
-def save_images_into_one(cas, config):
+def save_images_into_one(cas, config, name):
     resized_imgs = []
     width = 2000
     for img in cas: 
@@ -125,7 +125,7 @@ def save_images_into_one(cas, config):
     for reimg in resized_imgs:
         stacked_image.paste(reimg, (0, y_offset))
         y_offset += reimg.height
-    stacked_image.save(str(config.output_path) + f"/attention.png")
+    stacked_image.save(str(config.output_path) + f"/{name}")
 
 
 

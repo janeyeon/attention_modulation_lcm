@@ -56,13 +56,14 @@ if __name__ == '__main__':
     parser.add_argument('--idx', type=int, default=[1], nargs="*",
                         help='dense diffusion dataset image mask & caption index')
     parser.add_argument('-s', '--num_inference_steps', type=int, default=50)
-    parser.add_argument('--reg_part', type=float, default=.5)
-    parser.add_argument('--sreg', type=float, default=.3)
+    parser.add_argument('--reg_part', type=float, default=0.8)
+    parser.add_argument('--sreg', type=float, default=.4)
     parser.add_argument('--creg', type=float, default=1)
-    parser.add_argument('--pow_time', type=float, default=5)
+    parser.add_argument('--pow_time', type=float, default=3)
     parser.add_argument('-w', '--wo_modulation', action=argparse.BooleanOptionalAction, default=False,
                         help='when True, run inference without dense diffusion attention manipulation')
     parser.add_argument('--debug', type=str)
+    parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--key', type=str)
     parser.add_argument('--attention', type=bool, default=True)
     args = parser.parse_args()
@@ -245,9 +246,6 @@ if __name__ == '__main__':
         global_canvas_H, global_canvas_W = get_canvas(global_H, global_W)
         group_ids = getGroupIds_auto(group_dictionary)
 
-
-
-    
         prompt_wanted = generate_map_human( 
                     global_canvas_H=global_canvas_H, 
                     global_canvas_W=global_canvas_W, 
@@ -346,7 +344,7 @@ if __name__ == '__main__':
                       "down_self": [],  "mid_self": [],  "up_self": []}
 
         with torch.no_grad():
-            latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(1)).to(device) 
+            latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
             if args.model == 'LCM':
                 with torch.autocast('cuda'):
                     image = pipe(prompts[:1]*bsz, latents=latents,
@@ -364,14 +362,13 @@ if __name__ == '__main__':
         attentions_idx[idx] = attn_stores
         
         ## save images
-        time_hash = datetime.datetime.now().time()
-        hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
+        
         # save_path = f'./outputs/{idx:02}/'
         save_path = config.output_path 
         os.makedirs(save_path, exist_ok=True)
 
         for i, img in enumerate(imgs):
-            img_name = f'{args.model}_{args.num_inference_steps}steps_idx{idx:>02}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_{args.wo_modulation*"_woModulation"}_{hash_key}_{i}.png'
+            img_name = f'{args.model}_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png'
             if img.size[0] > 512:
                 img = img.resize((512,512)) # in order to compare LCM with SD
             img.save(str(save_path)+'/'+img_name)
@@ -383,10 +380,12 @@ if __name__ == '__main__':
     imgs_idx = dict()
     prompts_idx = dict()
     attentions_idx = dict()
+    time_hash = datetime.datetime.now().time()
+    hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
     for i in args.idx:
         print(f"=== Generate image for index {i} ===")
         generate_index_img(i)
         if args.attention: 
             cas, sas = get_attention_timesteps(pipe, attentions_idx[i], prompts_idx[i], 24, ['down','up'], 0, 2)
-            save_images_into_one(cas, config)
+            save_images_into_one(cas, config, f'attention_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png')
     # pdb.set_trace()
