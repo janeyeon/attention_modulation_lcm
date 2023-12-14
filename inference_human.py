@@ -25,7 +25,7 @@ from _config import *
 # from _utils import *
 from _group_dict import *
 # from _load_model import *
-# from _generate_map_human import *
+from _generate_map_human import *
 from _generate_map import *
 from _preprocess_patch import *
 from gd import *
@@ -55,7 +55,7 @@ if __name__ == '__main__':
     parser.add_argument('--idx', type=int, default=[1], nargs="*",
                         help='dense diffusion dataset image mask & caption index')
     parser.add_argument('-s', '--num_inference_steps', type=int, default=50)
-    parser.add_argument('--reg_part', type=float, default=.3)
+    parser.add_argument('--reg_part', type=float, default=.5)
     parser.add_argument('--sreg', type=float, default=.3)
     parser.add_argument('--creg', type=float, default=1)
     parser.add_argument('--pow_time', type=float, default=5)
@@ -75,10 +75,12 @@ if __name__ == '__main__':
     image_idx = args.key
     config = RunConfig()
 
+
     #get human centric dataset 
     input_temp, output_temp = return_temp(image_idx)
     group_dictionary = makeGroupdict_custom(input_temp, output_temp)
     config.output_path = config.output_path /  image_idx
+    os.makedirs(config.output_path, exist_ok=True)
 
 
     
@@ -230,12 +232,6 @@ if __name__ == '__main__':
             _module.__class__.__call__ = mod_forward
             _module.place_in_unet = curr_place
 
-            
-    ## Load naver-ai/DenseDiffusion dataset
-    # with open('./dataset/valset.pkl', 'rb') as f:
-    #     dataset = pickle.load(f)
-    # layout_img_root = './dataset/valset_layout/'
-
     
     ## Main function which generates modulated image
     def generate_index_img(idx):
@@ -247,37 +243,9 @@ if __name__ == '__main__':
         group_ids = getGroupIds_auto(group_dictionary)
 
 
-        # pose_masks, = generate_map_human( 
-        #             global_canvas_H=global_canvas_H, 
-        #             global_canvas_W=global_canvas_W, 
-        #             config=config, 
-        #             global_prompt=global_prompt,
-        #             group_ids=group_ids,
-        #             group_dictionary=group_dictionary,
-        #             image_idx=image_idx
-        #             )
 
-
-        pose_map,\
-        group_L_maps,\
-        inst_obj_L_maps,\
-        inst_obj_boxes, \
-        inst_obj_L_maps_small,\
-        group_maps,\
-        inst_maps,\
-        obj_maps,\
-        group_prompt_dic,\
-        inst_obj_prompt_dic,\
-        poses, \
-        pose_masks, \
-        nose2neck_lengths,\
-        group_boxes,\
-        inst_boxes,\
-        obj_boxes, \
-        inst_obj_maps,\
-        pose_box_map, \
-        group_mix_mask, \
-        inst_obj_mix_mask = generate_map( 
+    
+        prompt_wanted = generate_map_human( 
                     global_canvas_H=global_canvas_H, 
                     global_canvas_W=global_canvas_W, 
                     config=config, 
@@ -287,75 +255,26 @@ if __name__ == '__main__':
                     image_idx=image_idx
                     )
         
-        views = get_views(config.default_H, config.default_W, window_size=config.window_size, stride=config.stride, circular_padding=False)
-
-
-
-        full_prompt_for_view_multi,\
-        prompts_for_view_multi,\
-        text_cond_for_view_multi,\
-        sreg_maps_for_view_multi,\
-        reg_sizes_for_view_multi,\
-        creg_maps_for_view_multi,\
-        excluded_prompts,\
-        pose_image_for_view = preprocess_patch(pipe, 
-                            config,
-                            pose_map,
-                            group_L_maps,
-                            inst_obj_L_maps,
-                            inst_obj_L_maps_small,
-                            group_prompt_dic,
-                            inst_obj_prompt_dic,
-                            global_canvas_H,
-                            global_canvas_W,
-                            global_prompt,
-                            bsz,
-                            views, 
-                            view_index=0)
-        
-
-        # layout_img_path = layout_img_root+str(idx)+'.png'
-        # prompts = [dataset[idx]['textual_condition']] + dataset[idx]['segment_descriptions']
-
-
-        prompts = prompts_for_view_multi[0]
-        print(f"prompts: {prompts}")
-        # layout_img_ = pose_masks.permute(1, 2, 0).detach().cpu().numpy().astype(np.uint8)
-        # print(f"pose_masks: {layout_img_.shape} {layout_img_.dtype}")
-        layout_num = len(prompts)-1
+       
+        prompts = prompt_wanted
+        layout_num = 3
         ## prepare text condition embeddings
         ############
         text_input = pipe.tokenizer(prompts, padding="max_length", return_length=True, return_overflowing_tokens=False, 
                                     max_length=pipe.tokenizer.model_max_length, truncation=True, return_tensors="pt")
+        print(f"text_input: {text_input['input_ids'].shape}")
         cond_embeddings = pipe.text_encoder(text_input.input_ids.to(device))[0]
 
         uncond_input = pipe.tokenizer([""]*bsz, padding="max_length", max_length=pipe.tokenizer.model_max_length,
                                       truncation=True, return_tensors="pt")
         uncond_embeddings = pipe.text_encoder(uncond_input.input_ids.to(device))[0]
 
-        for i in range(1,len(prompts)):
-            # wlen = text_input['length'][i] - 2
-            # widx = text_input['input_ids'][i][1:1+wlen]
-            if i ==1 : #global
-                wlen = text_input['length'][i] - 3 # token 길이
-                widx = text_input['input_ids'][i][1:wlen+1] # 단어가 뭔지 나타내는 key들, 앞뒤토큰 버림 = wlen만큼의 길이
-            else: 
-                wlen = text_input['length'][i] - 2 # token 길이
-                widx = text_input['input_ids'][i][1:wlen+1] # 단어가 뭔지 나타내는 key들, 앞뒤토큰 버림 = wlen만큼의 길이
-            for j in range(77):
-                if (text_input['input_ids'][0][j:j+wlen] == widx).sum() == wlen:
-                    break
 
         ## set layout image masks
         ############
-        layout_img_ = np.asarray(Image.open(str(config.output_path) + "/save_pose.png").resize([sp_sz*8,sp_sz*8]))
-        layout_img_ = np.stack([layout_img_, layout_img_, layout_img_], axis=-1)
-        print(f"  layout_img_: {layout_img_.shape}")
-        # layout_img_ = np.asarray(Image.open(layout_img_path).resize([sp_sz*8,sp_sz*8]))[:,:,:3]
-
+        layout_img_ = np.asarray(Image.open(str(config.output_path) + "/save_pose.png").resize([sp_sz*8,sp_sz*8]))[..., :3]
         unique, counts = np.unique(np.reshape(layout_img_,(-1,layout_num)), axis=0, return_counts=True)
         sorted_idx = np.argsort(-counts)
-
         layouts_ = []
 
         for i in range(len(prompts)-1):
@@ -364,9 +283,12 @@ if __name__ == '__main__':
             else:
                 layouts_.append(((layout_img_ == unique[sorted_idx[i]]).sum(-1)==layout_num).astype(np.uint8))
 
+            save_img = Image.fromarray(layouts_[-1]*255)
+            save_img.save(str(config.output_path) + f"/save_pose_{i}.png")
+
         layouts = [torch.FloatTensor(l).unsqueeze(0).unsqueeze(0).cuda() for l in layouts_]
+        print(f" layouts_: {np.asarray(layouts_).shape}")
         layouts = F.interpolate(torch.cat(layouts),(sp_sz,sp_sz),mode='nearest')
-        print(f"layouts: {layouts.shape}")
         ############
         print('\n'.join(prompts))
         Image.fromarray(np.concatenate([255*_.squeeze().cpu().numpy() for _ in layouts], 1).astype(np.uint8))
@@ -392,6 +314,10 @@ if __name__ == '__main__':
             wlen = text_input['length'][i] - 2
             widx = text_input['input_ids'][i][1:1+wlen]
             for j in range(77):
+                diff = wlen - len(text_input['input_ids'][0][j:j+wlen])
+                if diff != 0: 
+                    widx = widx[:wlen-diff]
+                # print(f"input: {text_input['input_ids'][0][j:j+wlen]}, widx: {widx}, diff: {diff}")
                 if (text_input['input_ids'][0][j:j+wlen] == widx).sum() == wlen:
                     pww_maps[:,j:j+wlen,:,:] = layouts[i-1:i]
                     cond_embeddings[0][j:j+wlen] = cond_embeddings[i][1:1+wlen]

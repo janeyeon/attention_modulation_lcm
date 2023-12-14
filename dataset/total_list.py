@@ -249,11 +249,11 @@ Group1 : two girls are dancing in the right side.;
 Group0 bounding box; [ xmin 10 ymin 162 xmax 244 ymax 381 ];
 Group1 bounding box; [ xmin 371 ymin 190 xmax 515 ymax 335 ];
 Group0;
-P0: a girl, beautiful game character, wearing a red dress;
-P1: a girl, beautiful game character, wearing traditional dress;
+P0: a girl wearing a red dress;
+P1: a girl wearing pink dress;
 Group1;
-P0: a girl, beautiful game character, wearing traditional dress;
-P1: a girl, beautiful game character, wearing a yellow dress;
+P0: a girl wearing blue dress;
+P1: a girl wearing a yellow dress;
     """,
 
      "sunny" : \
@@ -457,11 +457,11 @@ Group1 : two girls are talking in the right side.;
 Group0 bounding box; [ xmin 10 ymin 162 xmax 244 ymax 381 ];
 Group1 bounding box; [ xmin 371 ymin 190 xmax 515 ymax 335 ];
 Group0;
-P0: a girl, beautiful game character, wearing a blue dress;
-P1: a girl, beautiful game character, wearing traditional dress;
+P0: a girl, wearing a blue dress;
+P1: a girl, wearing blue dress;
 Group1;
-P0: a girl, beautiful game character, wearing traditional dress;
-P1: a girl, beautiful game character, wearing a yellow dress;
+P0: a girl, wearing blue dress;
+P1: a girl,  wearing a blue dress;
     """,
     "zelda2" : \
     """
@@ -477,11 +477,11 @@ Group1 : two girls are talking in the right side.;
 Group0 bounding box; [ xmin 10 ymin 162 xmax 244 ymax 381 ];
 Group1 bounding box; [ xmin 371 ymin 190 xmax 515 ymax 335 ];
 Group0;
-P0: a girl, beautiful game character, wearing a red dress;
-P1: a girl, beautiful game character, wearing traditional dress;
+P0: a girl wearing a red dress;
+P1: a girl wearing pink dress;
 Group1;
-P0: a girl, beautiful game character, wearing traditional dress;
-P1: a girl, beautiful game character, wearing a yellow dress;
+P0: a girl wearing blue dress;
+P1: a girl wearing a yellow dress;
     """,
 
     "zelda3" : \
@@ -495,8 +495,8 @@ Global : The Legend of Zelda landscape, four girls are talking on the ground.;
 Group0 : two girls are talking in the left side.;
 Group0 bounding box; [ xmin 10 ymin 162 xmax 244 ymax 381 ];
 Group0;
-P0: a girl, beautiful game character, wearing a red dress;
-P1: a girl, beautiful game character, wearing traditional dress;
+P0: a girl wearing a red dress;
+P1: a girl wearing pink dress;
     """,
     "zelda4" : \
     """
@@ -507,10 +507,15 @@ Number of people and objects of Group0: P 2; O 0;
 Description;
 Global : The Legend of Zelda landscape, four girls are talking on the ground.;
 Group0 : two girls are talking in the left side.;
+Group1 : two girls are talking in the right side.;
 Group0 bounding box; [ xmin 10 ymin 162 xmax 244 ymax 381 ];
+Group1 bounding box; [ xmin 371 ymin 190 xmax 515 ymax 335 ];
 Group0;
-P0: A girl, beautiful game character, wearing a red dress;
+P0: A girl, wearing a red dress;
 P1: An orc with a green body and enormous muscles;
+Group1;
+P0: a girl wearing blue dress;
+P1: a girl wearing a yellow dress;
     """,
 "zelda5" : \
     """
@@ -525,6 +530,7 @@ Group0 bounding box; [ xmin 10 ymin 162 xmax 244 ymax 381 ];
 Group0;
 P0: a girl, beautiful game character, wearing a red dress;
 P1: An orc with a green body and enormous muscles;
+
     """,
 
 #     "zelda6" : \
@@ -866,11 +872,15 @@ P1: [ person a 263 240 b 255 269 c 228 271 d 214 322 e 204 372 f 281 266 g 294 3
     """\
 Image size 640 480;
 Task: Estimation of person and object bounding boxes of an image;
-Number of group boxes: 1;
+Number of group boxes: 2;
 Group0 bounding box; [ xmin 2 ymin 150 xmax 330 ymax 470 ];
+Group1 bounding box; [ xmin 318 ymin 203 xmax 513 ymax 350 ];
 Number of people and objects of Group0: P 2; O 0;
 P0: [ person a 101 206 b 76 240 c 101 243 d 120 294 e 116 336 f 41 237 g 43 291 h 58 336 i 101 341 j 101 418 k 101 457 l 63 336 m 60 413 n 57 464 o 97 202 p 97 202 q 93 206 r 63 202 ]; [ xmin 2 ymin 150 xmax 152 ymax 470 ];
 P1: [ person a 263 240 b 255 269 c 228 271 d 214 322 e 204 372 f 281 266 g 294 314 h 298 360 i 239 360 j 244 424 k 244 474 l 274 357 m 271 424 n 268 474 o 258 234 p 268 234 q 247 234 r 271 234 ]; [ xmin 176 ymin 193 xmax 330 ymax 470 ];
+Number of people and objects of Group1: P 2; O 0;
+P0: [ person a 353 224 b 364 239 c 351 239 d 339 256 e 328 266 f 377 239 g 386 258 h 377 269 i 351 279 j 342 308 k 336 339 l 369 282 m 363 313 n 363 344 o 351 221 p 357 221 q 353 221 r 369 221 ]; [ xmin 318 ymin 203 xmax 409 ymax 350 ];
+P1: [ person a 475 218 b 484 228 c 473 227 d 465 240 e 461 250 f 495 229 g 498 246 h 491 255 i 471 260 j 465 283 k 462 308 l 484 262 m 477 285 n 474 310 o 473 216 p 478 216 q 475 216 r 486 216 ]; [ xmin 438 ymin 203 xmax 513 ymax 349 ];
     """,
     "zelda5" : \
     """\

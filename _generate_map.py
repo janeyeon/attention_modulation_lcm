@@ -25,6 +25,9 @@ def generate_map(
 
     group_prompt_dic = {0:''}
     inst_obj_prompt_dic = {0:''}
+    global_prompt = global_prompt.replace('.',' ')
+    prompt_wanted = [global_prompt]
+    whole_prompt = global_prompt
 
     poses = []
     pose_masks = []
@@ -95,7 +98,8 @@ def generate_map(
                 article = "" if len(inst_prompt) > 1 else "a "
 
                 inst_obj_prompt_dic[j+1+prev_inst_points] = article + inst_prompt #!!!!!!!!!!!!!!!!!!!!!!!!
-                
+                prompt_wanted.append(article + inst_prompt)
+                whole_prompt += ' ' + article + inst_prompt
 
                 if group_idx == 'non_group_person':
                     print('non_group!!!!!!!!')
@@ -205,10 +209,10 @@ def generate_map(
         pose_map_pil = Image.fromarray(pose_map)
         pose_masks = torch.cat(pose_masks, dim=0)
         #!!!!!!!!!!!!!!!!!!!!!!!
-        save_img = np.zeros_like(pose_masks[0])
+        H, W = pose_masks.shape[1], pose_masks.shape[2]
+        save_img = np.zeros((H, W, 3), dtype=np.uint8)
         for idx, pose_mask in enumerate(pose_masks):
-            select_color = random.randint(0, 255)
-            save_img[pose_mask>0] = select_color
+            save_img[pose_mask>0] = [random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)]
         
         save_img = save_img.astype(np.uint8)
         save_pose = Image.fromarray(save_img*255)
@@ -336,6 +340,8 @@ def generate_map(
         pose_box_map = Image.fromarray(np.array(box_map) + pose_map)
         # display(pose_box_map)
         pose_box_map.save(config.output_path / f'PoseBoxes_{image_idx}.png')
+        whole_prompt += '.'
+        prompt_wanted.insert(0, whole_prompt)
 
         
 
@@ -359,4 +365,5 @@ def generate_map(
             inst_obj_maps, \
             pose_box_map, \
             group_mix_mask, \
-            inst_obj_mix_mask
+            inst_obj_mix_mask, \
+            prompt_wanted

@@ -221,7 +221,7 @@ if __name__ == '__main__':
 
         layout_img_path = layout_img_root+str(idx)+'.png'
         prompts = [dataset[idx]['textual_condition']] + dataset[idx]['segment_descriptions']
-
+        print(f"prompts: {prompts}")
         ## prepare text condition embeddings
         ############
         text_input = pipe.tokenizer(prompts, padding="max_length", return_length=True, return_overflowing_tokens=False, 
