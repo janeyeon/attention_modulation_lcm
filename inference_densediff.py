@@ -16,7 +16,7 @@ from torchvision import transforms
 import diffusers
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
 from diffusers.pipelines import DiffusionPipeline
-from diffusers import DDIMScheduler, LCMScheduler
+from diffusers import DDIMScheduler, LCMScheduler, StableDiffusionXLPipeline
 import transformers
 from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -39,7 +39,7 @@ python inference_densediff.py --model LCM --batch_size 1 -s 16 -w -idx 1
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='LCM', choices=['LCM', 'SD'])
+    parser.add_argument('--model', type=str, default='LCM', choices=['LCM', 'SD', 'Turbo'])
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--idx', type=int, default=[1], nargs="*",
                         help='dense diffusion dataset image mask & caption index')
@@ -50,6 +50,8 @@ if __name__ == '__main__':
     parser.add_argument('--pow_time', type=float, default=5)
     parser.add_argument('-w', '--wo_modulation', action=argparse.BooleanOptionalAction, default=False,
                         help='when True, run inference without dense diffusion attention manipulation')
+    parser.add_argument('--save_attn', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--debug', type=str)
     args = parser.parse_args()
     
@@ -64,7 +66,8 @@ if __name__ == '__main__':
     
     ## Load Model
     if args.model == 'LCM':
-        pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7")
+        pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7",
+                                                safety_checker=None)
         pipe.to(device=device, dtype=torch.float16)
         num_inference_steps = num_inference_steps
         lcm_origin_steps = 50
@@ -72,6 +75,15 @@ if __name__ == '__main__':
         pipe.scheduler.set_timesteps(num_inference_steps=num_inference_steps,
                                      original_inference_steps=lcm_origin_steps,
                                      device=device)
+    elif args.model == 'Turbo':
+        pipe = StableDiffusionXLPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-xl-base-1.0",
+            torch_dtype=torch.float16,
+            safety_checker=None,
+        ).to(device)
+        pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config,
+                                                  timestep_spacing="trailing")
+        pipe.scheduler.set_timesteps(num_inference_steps)
     else:
         pipe = diffusers.StableDiffusionPipeline.from_pretrained(
             "runwayml/stable-diffusion-v1-5",
@@ -88,7 +100,6 @@ if __name__ == '__main__':
     timesteps = pipe.scheduler.timesteps
     sp_sz = pipe.unet.sample_size
     bsz = args.batch_size
-    idx = args.idx
 
     mod_counts = []
 
@@ -173,7 +184,7 @@ if __name__ == '__main__':
             attention_probs = self.get_attention_scores(query, key, attention_mask)
 
         COUNT += 1
-        if attention_probs.shape[1] <= 32 ** 2: # save attention in each place(up, down, mid) when attention shape is small
+        if args.save_attn and (attention_probs.shape[1] <= 32 ** 2): # save attention in each place(up, down, mid) when attention shape is small
             step_store[f"{self.place_in_unet.lower()}_{'self' if sa_ else 'cross'}"].append(attention_probs)
 
         #################################################        
@@ -306,7 +317,7 @@ if __name__ == '__main__':
                       "down_self": [],  "mid_self": [],  "up_self": []}
 
         with torch.no_grad():
-            latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(1)).to(device) 
+            latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
             if args.model == 'LCM':
                 with torch.autocast('cuda'):
                     image = pipe(prompts[:1]*bsz, latents=latents,
@@ -320,7 +331,7 @@ if __name__ == '__main__':
         if imgs[0].size[0] > 512:
             imgs = [ x.resize((512,512)) for x in imgs ]
         if args.debug:
-            return
+            return attn_stores
         
         ## save images
         time_hash = datetime.datetime.now().time()
@@ -329,17 +340,17 @@ if __name__ == '__main__':
         os.makedirs(save_path, exist_ok=True)
 
         for i, img in enumerate(imgs):
-            img_name = f'{args.model}_{args.num_inference_steps}steps_idx{idx:>02}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_{args.wo_modulation*"_woModulation"}_{hash_key}_{i}.png'
+            img_name = f'{args.model}_{args.num_inference_steps}steps_idx{idx:>02}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}{args.wo_modulation*"_woModulation"}_{hash_key}_{i}.png'
             if img.size[0] > 512:
                 img = img.resize((512,512)) # in order to compare LCM with SD
             img.save(save_path+img_name)
         
         return attn_stores
             
+        
     ## Generate images for given indices  
     attn_indices = dict()
     for i in args.idx:
         print(f"=== Generate image for index {i} ===")
         attn_indices[i] = generate_index_img(i)
     
-    pdb.set_trace()
