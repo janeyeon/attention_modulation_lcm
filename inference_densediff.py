@@ -319,11 +319,10 @@ if __name__ == '__main__':
         with torch.no_grad():
             latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
             if args.model == 'LCM':
-                with torch.autocast('cuda'):
-                    image = pipe(prompts[:1]*bsz, latents=latents,
-                                 num_inference_steps=num_inference_steps,
-                                 lcm_origin_steps=lcm_origin_steps,
-                                 guidance_scale=8.0).images
+                image = pipe(prompts[:1]*bsz, latents=latents,
+                             num_inference_steps=num_inference_steps,
+                             lcm_origin_steps=lcm_origin_steps,
+                             guidance_scale=8.0).images
             else:
                 image = pipe(prompts[:1]*bsz, latents=latents).images
 
