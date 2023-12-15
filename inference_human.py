@@ -56,7 +56,7 @@ if __name__ == '__main__':
     parser.add_argument('--idx', type=int, default=[1], nargs="*",
                         help='dense diffusion dataset image mask & caption index')
     parser.add_argument('-s', '--num_inference_steps', type=int, default=50)
-    parser.add_argument('--reg_part', type=float, default=0.8)
+    parser.add_argument('--reg_part', type=float, default=0.5)
     parser.add_argument('--sreg', type=float, default=.4)
     parser.add_argument('--creg', type=float, default=1)
     parser.add_argument('--pow_time', type=float, default=3)
@@ -76,6 +76,7 @@ if __name__ == '__main__':
     sreg = args.sreg
     creg = args.creg
     image_idx = args.key
+    lcm_origin_steps = 50
     config = RunConfig()
 
 
@@ -89,20 +90,65 @@ if __name__ == '__main__':
     
     ## Load Model
     if args.model == 'LCM':
-        pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7")
-        pipe.to(device=device, dtype=torch.float16)
-        num_inference_steps = num_inference_steps
-        lcm_origin_steps = 50
-        pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
-        pipe.scheduler.set_timesteps(num_inference_steps=num_inference_steps,
-                                     original_inference_steps=lcm_origin_steps,
-                                     device=device)
+        # pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7")
+        # pipe.to(device=device, dtype=torch.float16)
+        # num_inference_steps = num_inference_steps
+        # lcm_origin_steps = 50
+        # pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
+        # pipe.scheduler.set_timesteps(num_inference_steps=num_inference_steps,
+        #                              original_inference_steps=lcm_origin_steps,
+        #                              device=device)
+
+        from LCM_Dreamshaper_v7.lcm_pipeline import LatentConsistencyModelPipeline
+        from LCM_Dreamshaper_v7.lcm_scheduler import LCMScheduler
+
+        from diffusers import AutoencoderKL, UNet2DConditionModel
+        from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
+        from transformers import CLIPTokenizer, CLIPTextModel, CLIPImageProcessor
+
+        import os
+        import torch
+        from tqdm import tqdm
+        from safetensors.torch import load_file
+
+        # Origin SD Model ID:
+        model_id = "digiplay/DreamShaper_7"
+        
+
+        # Initalize Diffusers Model:
+        vae = AutoencoderKL.from_pretrained(model_id, subfolder="vae")
+        text_encoder = CLIPTextModel.from_pretrained(model_id, subfolder="text_encoder")
+        tokenizer = CLIPTokenizer.from_pretrained(model_id, subfolder="tokenizer")
+        safety_checker = StableDiffusionSafetyChecker.from_pretrained(model_id, subfolder="safety_checker")
+        feature_extractor = CLIPImageProcessor.from_pretrained(model_id, subfolder="feature_extractor")
+
+
+        # Initalize Scheduler:
+        scheduler = LCMScheduler(beta_start=0.00085, beta_end=0.0120, beta_schedule="scaled_linear", prediction_type="epsilon")
+        unet = UNet2DConditionModel.from_pretrained("./LCM_Dreamshaper_v7", subfolder="unet", device_map=None, low_cpu_mem_usage=False, local_files_only=True)
+
+
+        # Replace the unet with LCM:
+        lcm_unet_ckpt = "./LCM_Dreamshaper_v7/LCM_Dreamshaper_v7_4k.safetensors"
+        ckpt = load_file(lcm_unet_ckpt)
+        m, u = unet.load_state_dict(ckpt, strict=False)
+        if len(m) > 0:
+            print("missing keys:")
+            print(m)
+        if len(u) > 0:
+            print("unexpected keys:")
+            print(u)
+
+
+        # LCM Pipeline:
+        pipe = LatentConsistencyModelPipeline(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet, scheduler=scheduler, safety_checker=safety_checker, feature_extractor=feature_extractor)
+        pipe = pipe.to("cuda")
     else:
         pipe = diffusers.StableDiffusionPipeline.from_pretrained(
             "runwayml/stable-diffusion-v1-5",
             safety_checker=None,
             variant="fp16",
-            cache_dir='./models/diffusers/'
+            cache_dir='./LCM_Dreamshaper_v7/models/diffusers/'
         ).to(device)
         pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
         pipe.scheduler.set_timesteps(num_inference_steps)
@@ -346,11 +392,15 @@ if __name__ == '__main__':
         with torch.no_grad():
             latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
             if args.model == 'LCM':
-                with torch.autocast('cuda'):
-                    image = pipe(prompts[:1]*bsz, latents=latents,
-                                 num_inference_steps=num_inference_steps,
-                                 lcm_origin_steps=lcm_origin_steps,
-                                 guidance_scale=8.0).images
+                # with torch.autocast('cuda'):
+                image = pipe(
+                            prompt=prompts[:1]*bsz, 
+                            latents=latents,
+                            num_inference_steps=num_inference_steps,
+                            # prompt_embeds=text_cond,
+                            lcm_origin_steps=lcm_origin_steps,
+                            guidance_scale=8.0
+                            ).images
             else:
                 image = pipe(prompts[:1]*bsz, latents=latents).images
 
