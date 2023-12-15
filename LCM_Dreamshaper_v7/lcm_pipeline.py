@@ -456,37 +456,39 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                         prompt,
                         max_iter_to_alter=25,
                     )
-
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = (
-                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                )
-                latent_model_input = self.scheduler.scale_model_input(
-                    latent_model_input, t
-                )
-
-                latents = latent_model_input
-
-                #! End Code for syngen
-
-
-                # model prediction (v-prediction, eps, x)
-                model_pred = self.unet(
-                    latents,
-                    ts,
-                    timestep_cond=w_embedding,
-                    encoder_hidden_states=prompt_embeds,
-                    cross_attention_kwargs=cross_attention_kwargs, 
-                    return_dict=False
-                )[0]
-
-                # compute the previous noisy sample x_t -> x_t-1
-                latents, denoised = self.scheduler.step(model_pred, i, t, latents, return_dict=False)
                 
-                # # call the callback, if provided
-                # if i == len(timesteps) - 1:
-                progress_bar.update()
-                torch.cuda.empty_cache()
+                
+                with torch.no_grad():
+                    # expand the latents if we are doing classifier free guidance
+                    latent_model_input = (
+                        torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                    )
+                    latent_model_input = self.scheduler.scale_model_input(
+                        latent_model_input, t
+                    )
+
+                    latents = latent_model_input
+
+                    #! End Code for syngen
+
+
+                    # model prediction (v-prediction, eps, x)
+                    model_pred = self.unet(
+                        latents,
+                        ts,
+                        timestep_cond=w_embedding,
+                        encoder_hidden_states=prompt_embeds,
+                        cross_attention_kwargs=cross_attention_kwargs, 
+                        return_dict=False
+                    )[0]
+
+                    # compute the previous noisy sample x_t -> x_t-1
+                    latents, denoised = self.scheduler.step(model_pred, i, t, latents, return_dict=False)
+                    
+                    # # call the callback, if provided
+                    # if i == len(timesteps) - 1:
+                    progress_bar.update()
+                    torch.cuda.empty_cache()
             
         if not output_type == "latent":
             image = self.vae.decode(denoised / self.vae.config.scaling_factor, return_dict=False)[0]
@@ -527,7 +529,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 # Forward pass of denoising with text conditioning
                 latent = latent.unsqueeze(0)
                 text_embedding = text_embedding.unsqueeze(0)
-
+                torch.cuda.empty_cache()
                 self.unet(
                     latent,
                     t,
@@ -549,6 +551,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 
 
             updated_latents.append(latent)
+            torch.cuda.empty_cache()
+            
 
         latents = torch.cat(updated_latents, dim=0)
 
@@ -584,6 +588,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 attn_map_idx_to_wp,
             )
             loss += positive_loss
+            torch.cuda.empty_cache()
             # loss += negative_loss
 
         return loss

@@ -192,6 +192,30 @@ if __name__ == '__main__':
         )
         
         return attention_maps_list
+    def extract_attribution_indices(self, prompt):
+        global prompts, attn_prompt
+        # extract standard attribution indices
+        # pairs = extract_attribution_indices(self.doc)
+
+        # # extract attribution indices with verbs in between
+        # pairs_2 = extract_attribution_indices_with_verb_root(self.doc)
+        # pairs_3 = extract_attribution_indices_with_verbs(self.doc)
+        # # make sure there are no duplicates
+        # pairs = unify_lists(pairs, pairs_2, pairs_3)
+        prompt = prompts[0]
+        pairs = attn_prompt
+        print(f"Final pairs collected: {pairs}")
+        # paired_indices = self._align_indices(prompt, pairs)
+        count = 0
+        paired_indices = []
+        for pair in pairs:
+            text = []
+            for _ in pair:
+                text.append(count)
+                count += 1
+            paired_indices.append(text)
+        print(f"paired_indices: {paired_indices}")
+        return paired_indices
 
     ## attention modulation function
     def mod_forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None):
@@ -296,7 +320,7 @@ if __name__ == '__main__':
     
     # change _aggregate_and_get_attention_maps_per_token function 
     pipe.__class__._aggregate_and_get_attention_maps_per_token = get_attention_maps_per_token
-
+    pipe.__class__._extract_attribution_indices = extract_attribution_indices
     for _module in pipe.unet.modules():
         n = _module.__class__.__name__
         
@@ -314,7 +338,7 @@ if __name__ == '__main__':
     
     ## Main function which generates modulated image
     def generate_index_img(idx):
-        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
+        global prompts, attn_prompt, COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
         
         global_prompt = group_dictionary['global_caption']
         global_W, global_H = group_dictionary['shape']
@@ -332,6 +356,7 @@ if __name__ == '__main__':
                     )
         
         prompts_idx[idx] = prompt_wanted[0]
+        attn_prompt = [prompt.split(' ') for prompt in prompt_wanted[1:]]
         prompts = prompt_wanted
         layout_num = 3
         ## prepare text condition embeddings
@@ -418,10 +443,10 @@ if __name__ == '__main__':
         step_store = {"down_cross": [], "mid_cross": [], "up_cross": [],
                       "down_self": [],  "mid_self": [],  "up_self": []}
 
-        with torch.no_grad():
-            latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
-            if args.model == 'LCM':
-                # with torch.autocast('cuda'):
+        # with torch.no_grad():
+        latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
+        if args.model == 'LCM':
+            with torch.autocast('cuda'):
                 image = pipe(
                             prompt=prompts[:1][0]*bsz, 
                             latents=latents,
@@ -430,8 +455,8 @@ if __name__ == '__main__':
                             lcm_origin_steps=lcm_origin_steps,
                             guidance_scale=8.0
                             ).images
-            else:
-                image = pipe(prompts[:1]*bsz, latents=latents).images
+        else:
+            image = pipe(prompts[:1]*bsz, latents=latents).images
 
         imgs = [ Image.fromarray(np.asarray(image[i])) for i in range(len(image)) ]
         if imgs[0].size[0] > 512:
@@ -467,4 +492,5 @@ if __name__ == '__main__':
         if args.attention: 
             cas, sas = get_attention_timesteps(pipe, attentions_idx[i], prompts_idx[i], 24, ['down','up'], 0, 2)
             save_images_into_one(cas, config, f'attention_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png')
+            torch.cuda.empty_cache()
     # pdb.set_trace()
