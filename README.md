@@ -26,6 +26,7 @@ in `dataset/dict_gt.json`,  crowd-caption  datset
 ```
 conda create -n  -f  environment.yml  
 conda activate  lcm
+python -m spacy download en_core_web_trf
 python run_lcm.py --key $key number$ --seed $seed number$
 ```
 

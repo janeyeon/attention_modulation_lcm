@@ -77,7 +77,7 @@ def show_cross_attention(pipe, attention_store, prompts, res:int, from_where: Li
             continue
         image = attention_maps[:, :, i]
         image = 255 * image / image.max()
-        image = image.unsqueeze(-1).expand(*image.shape, 3)
+        image = image.unsqueeze(-1).expand(*image.shape, 3).detach().cpu()
         image = image.numpy().astype(np.uint8)
         image = np.array(Image.fromarray(image).resize((256, 256)))
         image = text_under_image(image, decoder(int(tokens[i])))
@@ -88,7 +88,7 @@ def show_cross_attention(pipe, attention_store, prompts, res:int, from_where: Li
 
 def show_self_attention_comp(attention_store, prompts, res:int, from_where: List[str], select: int = 0, num_rows=1, max_com=10):
     attention_maps = aggregate_attention(attention_store, prompts, res, from_where, False, select)
-    attention_maps = attention_maps.numpy().reshape((res ** 2, res ** 2)).astype(float)
+    attention_maps = attention_maps.detach().cpu().numpy().reshape((res ** 2, res ** 2)).astype(float)
     u, s, vh = np.linalg.svd(attention_maps - np.mean(attention_maps, axis=1, keepdims=True))
     images = []
     for i in range(max_com):

@@ -78,6 +78,7 @@ if __name__ == '__main__':
     image_idx = args.key
     lcm_origin_steps = 50
     config = RunConfig()
+    
 
 
     #get human centric dataset 
@@ -170,7 +171,28 @@ if __name__ == '__main__':
     print("- Regulation part:", reg_part, "/ Self attention regulation:", sreg, "/ Cross attention regulation:", creg, "/ Time regulation:", args.pow_time)
     # print("Chosen timesteps:", timesteps)
 
-    
+    def get_attention_maps_per_token(self):
+        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
+        print(f"hello!!!!!!!!!!!!!!!!!!!!!!!!")
+        from_where=("up", "down", "mid")
+        out = []
+        # res : 사이즈 다를 수도 
+        res = 12
+        num_pixels = res ** 2
+        
+        for location in from_where:
+            for item in step_store[f"{location}_cross"]:
+                if item.shape[1] == num_pixels:
+                    cross_maps = item.reshape(-1, res, res, item.shape[-1])[0]
+                    print(f"cross_maps: {cross_maps.shape}")
+                    # out.append(cross_maps)
+        attention_maps = cross_maps
+        attention_maps_list = self._get_attention_maps_list(
+            attention_maps=attention_maps
+        )
+        
+        return attention_maps_list
+
     ## attention modulation function
     def mod_forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None):
         global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
@@ -216,6 +238,8 @@ if __name__ == '__main__':
             key =  key[key.size(0)//2:,  ...]
             value = value[value.size(0)//2:,  ...]
 
+        
+        torch.cuda.empty_cache()
         # modulate attention with dense diffusion
         if (COUNT/num_attn_layers < num_inference_steps*reg_part):
             mod_counts.append(COUNT)
@@ -245,7 +269,7 @@ if __name__ == '__main__':
             attention_probs = attention_probs.to(dtype)
         else: # get original attention
             attention_probs = self.get_attention_scores(query, key, attention_mask)
-
+        
         COUNT += 1
         if attention_probs.shape[1] <= 32 ** 2: # save attention in each place(up, down, mid) when attention shape is small
             step_store[f"{self.place_in_unet.lower()}_{'self' if sa_ else 'cross'}"].append(attention_probs)
@@ -270,9 +294,12 @@ if __name__ == '__main__':
         return hidden_states
 
     
-    ## change call function of attn layers in Unet 
+    # change _aggregate_and_get_attention_maps_per_token function 
+    pipe.__class__._aggregate_and_get_attention_maps_per_token = get_attention_maps_per_token
+
     for _module in pipe.unet.modules():
         n = _module.__class__.__name__
+        
         if 'CrossAttn' in n:
             for place in ['Up', 'Down', 'Mid']:
                 if place in n:
@@ -281,6 +308,8 @@ if __name__ == '__main__':
         if n == "Attention":
             _module.__class__.__call__ = mod_forward
             _module.place_in_unet = curr_place
+
+        
 
     
     ## Main function which generates modulated image
@@ -394,7 +423,7 @@ if __name__ == '__main__':
             if args.model == 'LCM':
                 # with torch.autocast('cuda'):
                 image = pipe(
-                            prompt=prompts[:1]*bsz, 
+                            prompt=prompts[:1][0]*bsz, 
                             latents=latents,
                             num_inference_steps=num_inference_steps,
                             # prompt_embeds=text_cond,

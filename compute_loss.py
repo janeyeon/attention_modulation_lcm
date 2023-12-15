@@ -256,7 +256,10 @@ def calculate_negative_loss(
 
 def get_indices(tokenizer, prompt: str) -> Dict[str, int]:
     """Utility function to list the indices of the tokens you wish to alter"""
+    #! syngen
+    # ids = tokenizer(prompt).input_ids[0]
     ids = tokenizer(prompt).input_ids
+    
     indices = {
         i: tok
         for tok, i in zip(
