@@ -183,7 +183,6 @@ if __name__ == '__main__':
             for item in step_store[f"{location}_cross"]:
                 if item.shape[1] == num_pixels:
                     cross_maps = torch.sum(item.reshape(-1, res, res, item.shape[-1]), dim=0)
-                    print(f"cross_maps: {cross_maps.shape}")
                     # out.append(cross_maps)
         attention_maps = cross_maps
         attention_maps_list = self._get_attention_maps_list(
@@ -391,6 +390,13 @@ if __name__ == '__main__':
         
         prompts_idx[idx] = prompt_wanted[0]
         attn_prompt = [prompt.split(' ') for prompt in prompt_wanted[1:]]
+        count = 1 
+        layout_count = []
+        for single_instance in attn_prompt:
+            temp = [count, count+len(single_instance)]
+            layout_count.append(temp)
+            count+=len(single_instance)
+        print(f"layout_count: {layout_count}")
         prompts = prompt_wanted
         layout_num = 3
         ## prepare text condition embeddings
@@ -488,8 +494,8 @@ if __name__ == '__main__':
                         num_inference_steps=num_inference_steps,
                         lcm_origin_steps=lcm_origin_steps,
                         guidance_scale=8.0, 
-                        mod_forward=mod_forward, 
-                        mod_orig=mod_orig
+                        layouts=layouts,
+                        layout_count=layout_count
                         ).images
         else:
             image = pipe(prompts[:1]*bsz, latents=latents).images

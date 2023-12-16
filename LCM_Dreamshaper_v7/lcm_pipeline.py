@@ -13,6 +13,7 @@ import math
 import itertools
 from typing import Any, Callable, Dict, Optional, Union, List, Tuple
 
+import torch.nn.functional as F
 import spacy
 import torch
 from diffusers import StableDiffusionPipeline, AutoencoderKL, UNet2DConditionModel
@@ -292,9 +293,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-        parsed_prompt: str=None, 
-        mod_forward: None = None, 
-        mod_orig: None = None, 
+        layouts: Optional[List[str]] = None, 
+        layout_count: Optional[List[int]] = None
         ):
 
         r"""
@@ -480,6 +480,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                         cross_attention_kwargs,
                         prompt,
                         max_iter_to_alter=25,
+                        layouts=layouts, 
+                        layout_count=layout_count
                     )
                     print(f"finish origin!!!!!!!")
                     # attention2Mod(self, mod_forward)
@@ -548,6 +550,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             cross_attention_kwargs,
             prompt,
             max_iter_to_alter=25,
+            layouts=None,
+            layout_count=None,
     ):
         with torch.enable_grad():
             latents = latents.clone().detach().requires_grad_(True)
@@ -568,7 +572,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 # Get attention maps
                 attention_maps = self._aggregate_and_get_attention_maps_per_token()
         
-                loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt) 
+                loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt, layouts=layouts, layout_count=layout_count) 
                 # Perform gradient update
                 if i < max_iter_to_alter:
                     if loss != 0:
@@ -587,10 +591,11 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         return latents
 
     def _compute_loss(
-            self, attention_maps: List[torch.Tensor], prompt: Union[str, List[str]]
+            self, attention_maps: List[torch.Tensor], prompt: Union[str, List[str]], layouts=None, layout_count=None
     ) -> torch.Tensor:
+        
         attn_map_idx_to_wp = get_attention_map_index_to_wordpiece(self.tokenizer, prompt)
-        loss = self._attribution_loss(attention_maps, prompt, attn_map_idx_to_wp)
+        loss = self._attribution_loss(attention_maps, prompt, attn_map_idx_to_wp, layouts=layouts, layout_count=layout_count)
 
         return loss
 
@@ -600,6 +605,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             attention_maps: List[torch.Tensor],
             prompt: Union[str, List[str]],
             attn_map_idx_to_wp,
+            layouts=None,
+            layout_count=None
     ) -> torch.Tensor:
         # if not self.subtrees_indices:
         #   self.subtrees_indices = self._extract_attribution_indices(prompt)
@@ -607,18 +614,20 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         subtrees_indices = self.subtrees_indices
         loss = 0
 
-        for subtree_indices in subtrees_indices:
+        for idx, subtree_indices in enumerate(subtrees_indices):
             noun, modifier = split_indices(subtree_indices)
             all_subtree_pairs = list(itertools.product(noun, modifier))
-            print(f"all_subtree_pairs: {all_subtree_pairs}, subtree_indices: {subtree_indices}")
-            positive_loss, negative_loss = self._calculate_losses(
-                attention_maps,
-                all_subtree_pairs,
-                subtree_indices,
-                attn_map_idx_to_wp,
-            )
-            loss = loss + positive_loss[0]
-            loss = loss + negative_loss[0]
+            if idx > 0: 
+                positive_loss, negative_loss = self._calculate_losses(
+                    attention_maps,
+                    all_subtree_pairs,
+                    subtree_indices,
+                    attn_map_idx_to_wp,
+                    layouts,
+                    layout_count
+                )
+                loss = loss + positive_loss[0]
+                loss = loss + negative_loss[0]
             
 
         return loss
@@ -629,19 +638,29 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             all_subtree_pairs,
             subtree_indices,
             attn_map_idx_to_wp,
+            layouts,
+            layout_count
     ):
         positive_loss = []
         negative_loss = []
+         
         for pair in all_subtree_pairs:
             noun, modifier = pair
+            for i, count in enumerate(layout_count):
+                if count[0] < modifier and count[1] > noun:
+                    temp =  layouts[i].unsqueeze(0).float()
+                    selected_layout = F.interpolate(temp, size=(32, 32), mode='bilinear').squeeze()
+                    # selected_layout = selected_layout / max(selected_layout)
+                    # print(F"mzx: {max(selected_layout)}, min: {min(selected_layout)}")
+                    break
             positive_loss.append(
                 calculate_positive_loss(
-                    attention_maps, modifier, noun
+                    attention_maps, modifier, noun, selected_layout
                 )
             )
             negative_loss.append(
                 calculate_negative_loss(
-                    attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp
+                    attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp, selected_layout
                 )
             )
 

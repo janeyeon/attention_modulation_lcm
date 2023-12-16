@@ -1,6 +1,8 @@
 import torch.distributions as dist
 from typing import List, Dict
 import itertools
+import torch.nn.functional as F
+import torch
 
 start_token = "<|startoftext|>"
 end_token = "<|endoftext|>"
@@ -50,33 +52,67 @@ def _symmetric_kl(attention_map1, attention_map2):
     return avg_kl_divergence
 
 
-def calculate_positive_loss(attention_maps, modifier, noun):
+def calculate_positive_loss(attention_maps, modifier, noun, layout):
     src_indices = modifier
     dest_indices = noun
+    attn_size = lambda x: F.interpolate(x.unsqueeze(0).unsqueeze(0), size=(32, 32), mode="bilinear", align_corners=False).squeeze()
+    layout = layout * 0.9 + 0.05
 
     if isinstance(src_indices, list) and isinstance(dest_indices, list):
-        wp_pos_loss = [
+        wp_pos_loss_1 = [
             _symmetric_kl(attention_maps[s], attention_maps[d])
             for (s, d) in itertools.product(src_indices, dest_indices)
         ]
-        positive_loss = max(wp_pos_loss)
+        wp_pos_loss_2 = [
+            _symmetric_kl(layout * max(attention_maps[d]), attention_maps[d])
+            for d in dest_indices
+        ]
+        wp_pos_loss_3 = [
+            _symmetric_kl(attention_maps[s], layout * max(attention_maps[s]))
+            for s in src_indices
+        ]
+
+        positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
     elif isinstance(dest_indices, list):
-        wp_pos_loss = [
+        wp_pos_loss_1 = [
             _symmetric_kl(attention_maps[src_indices], attention_maps[d])
             for d in dest_indices
         ]
-        positive_loss = max(wp_pos_loss)
+        wp_pos_loss_2 = [
+            _symmetric_kl(layout, attention_maps[d])
+            for d in dest_indices
+        ]
+        wp_pos_loss_3 = [
+            _symmetric_kl(attention_maps[src_indices], layout)
+        ]
+
+
+        positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
+
     elif isinstance(src_indices, list):
-        wp_pos_loss = [
+        wp_pos_loss_1 = [
             _symmetric_kl(attention_maps[s], attention_maps[dest_indices])
             for s in src_indices
         ]
-        positive_loss = max(wp_pos_loss)
-    else:
-        positive_loss = _symmetric_kl(
-            attention_maps[src_indices], attention_maps[dest_indices]
-        )
 
+        wp_pos_loss_2 = [
+            _symmetric_kl(attention_maps[s], layout)
+            for s in src_indices
+        ]
+        wp_pos_loss_3 = [
+            _symmetric_kl(layout, attention_maps[dest_indices])
+        ]
+        positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
+
+    else:
+        wp_pos_loss_1 = _symmetric_kl(
+            attn_size(attention_maps[src_indices]), attn_size(attention_maps[dest_indices])
+        )
+        wp_pos_loss_2 =  _symmetric_kl(attn_size(attention_maps[src_indices]), layout)
+        wp_pos_loss_3 =  _symmetric_kl(layout, attn_size(attention_maps[dest_indices]))
+        print(F"wp_pos_loss_1: {wp_pos_loss_1}, wp_pos_loss_2: {wp_pos_loss_2}, wp_pos_loss_3: {wp_pos_loss_3}")
+        positive_loss = (wp_pos_loss_1 + wp_pos_loss_2 + wp_pos_loss_3) / 3
+    print(f"positive_loss: {positive_loss}")
     return positive_loss
 
 
@@ -252,7 +288,7 @@ def extract_attribution_indices_with_verb_root(doc):
     return subtrees, total_idxs
 
 def calculate_negative_loss(
-        attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp
+        attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp, layout
 ):
     outside_indices = _get_outside_indices(subtree_indices, attn_map_idx_to_wp)
     negative_modifier_loss, num_modifier_pairs = _calculate_outside_loss(
