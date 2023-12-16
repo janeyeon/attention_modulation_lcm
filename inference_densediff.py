@@ -5,6 +5,8 @@ import argparse
 import pdb
 import datetime
 import hashlib
+from functools import partial
+from collections import defaultdict
 
 import numpy as np
 from PIL import Image
@@ -19,7 +21,7 @@ from diffusers.pipelines import DiffusionPipeline
 from diffusers import DDIMScheduler, LCMScheduler, StableDiffusionXLPipeline
 import transformers
 from transformers import CLIPTextModel, CLIPTokenizer
-
+from torchmetrics.functional.multimodal import clip_score
 """
 Example usage
 
@@ -52,6 +54,8 @@ if __name__ == '__main__':
                         help='when True, run inference without dense diffusion attention manipulation')
     parser.add_argument('--save_attn', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--eval_all_images', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--test', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--debug', type=str)
     args = parser.parse_args()
     
@@ -67,8 +71,9 @@ if __name__ == '__main__':
     ## Load Model
     if args.model == 'LCM':
         pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7",
-                                                safety_checker=None)
-        pipe.to(device=device, dtype=torch.float16)
+                                                safety_checker=None,
+                                                torch_dtype=torch.float16)
+        pipe.to(device=device)
         num_inference_steps = num_inference_steps
         lcm_origin_steps = 50
         pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
@@ -79,11 +84,12 @@ if __name__ == '__main__':
         pipe = StableDiffusionXLPipeline.from_pretrained(
             "stabilityai/stable-diffusion-xl-base-1.0",
             torch_dtype=torch.float16,
+            variant="fp16",
             safety_checker=None,
         ).to(device)
         pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config,
                                                   timestep_spacing="trailing")
-        pipe.scheduler.set_timesteps(num_inference_steps)
+        pipe.scheduler.set_timesteps(num_inference_steps, device=device)
     else:
         pipe = diffusers.StableDiffusionPipeline.from_pretrained(
             "runwayml/stable-diffusion-v1-5",
@@ -221,9 +227,10 @@ if __name__ == '__main__':
 
             
     ## Load naver-ai/DenseDiffusion dataset
-    with open('./dataset/valset.pkl', 'rb') as f:
+    split = 'valset' if not args.test else 'testset'
+    with open(f'./dataset/{split}.pkl', 'rb') as f:
         dataset = pickle.load(f)
-    layout_img_root = './dataset/valset_layout/'
+    layout_img_root = f'./dataset/{split}_layout/'
 
     
     ## Main function which generates modulated image
@@ -232,7 +239,7 @@ if __name__ == '__main__':
 
         layout_img_path = layout_img_root+str(idx)+'.png'
         prompts = [dataset[idx]['textual_condition']] + dataset[idx]['segment_descriptions']
-
+        prompts_idx[idx] = prompts[0]
         ## prepare text condition embeddings
         ############
         text_input = pipe.tokenizer(prompts, padding="max_length", return_length=True, return_overflowing_tokens=False, 
@@ -254,8 +261,10 @@ if __name__ == '__main__':
         ############
         layout_img_ = np.asarray(Image.open(layout_img_path).resize([sp_sz*8,sp_sz*8]))[:,:,:3]
         unique, counts = np.unique(np.reshape(layout_img_,(-1,3)), axis=0, return_counts=True)
+        if len(counts) < 3: #test set 57번 이상함
+            unique = np.concatenate((unique, [[255,255,255]]))
+            counts = np.concatenate((counts, [0]))
         sorted_idx = np.argsort(-counts)
-
         layouts_ = []
 
         for i in range(len(prompts)-1):
@@ -263,6 +272,7 @@ if __name__ == '__main__':
                 layouts_ = [((layout_img_ == unique[sorted_idx[i]]).sum(-1)==3).astype(np.uint8)] + layouts_
             else:
                 layouts_.append(((layout_img_ == unique[sorted_idx[i]]).sum(-1)==3).astype(np.uint8))
+
 
         layouts = [torch.FloatTensor(l).unsqueeze(0).unsqueeze(0).cuda() for l in layouts_]
         layouts = F.interpolate(torch.cat(layouts),(sp_sz,sp_sz),mode='nearest')
@@ -319,12 +329,12 @@ if __name__ == '__main__':
         with torch.no_grad():
             latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
             if args.model == 'LCM':
-                image = pipe(prompts[:1]*bsz, latents=latents,
+                image = pipe(prompts[:1]*bsz, latents=latents.to(torch.float16),
                              num_inference_steps=num_inference_steps,
                              lcm_origin_steps=lcm_origin_steps,
                              guidance_scale=8.0).images
             else:
-                image = pipe(prompts[:1]*bsz, latents=latents).images
+                image = pipe(prompts[:1]*bsz, latents=latents, num_inference_steps=num_inference_steps).images
 
         imgs = [ Image.fromarray(np.asarray(image[i])) for i in range(len(image)) ]
         if imgs[0].size[0] > 512:
@@ -337,19 +347,66 @@ if __name__ == '__main__':
         hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
         save_path = f'./outputs/{idx:02}/'
         os.makedirs(save_path, exist_ok=True)
+        
 
         for i, img in enumerate(imgs):
-            img_name = f'{args.model}_{args.num_inference_steps}steps_idx{idx:>02}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}{args.wo_modulation*"_woModulation"}_{hash_key}_{i}.png'
+            img_name = f'{args.model}_{args.num_inference_steps}steps_idx{idx:>02}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}{args.wo_modulation*"_woModulation"}{"_test"*args.test}_seed{args.seed}_{i}_{hash_key}.png'
             if img.size[0] > 512:
                 img = img.resize((512,512)) # in order to compare LCM with SD
             img.save(save_path+img_name)
+            imgs_idx[idx].append(imgs)
+            attentions_idx[idx].append(attn_stores)
         
         return attn_stores
             
         
     ## Generate images for given indices  
-    attn_indices = dict()
-    for i in args.idx:
-        print(f"=== Generate image for index {i} ===")
-        attn_indices[i] = generate_index_img(i)
-    
+    imgs_idx = defaultdict(list)
+    attentions_idx = defaultdict(list)
+    prompts_idx = dict()
+    if not args.eval_all_images:
+        for i in args.idx:
+            print(f"=== Generate image for index {i} ===")
+            attentions_idx[i] = generate_index_img(i)
+    else:
+        args.idx = range(20) if not args.test else range(250)
+        seeds = range(10) if not args.test else range(2)
+        for seed in seeds:
+            args.seed = seed
+            print(f"=== Seed: {seed} ===")
+            for i in args.idx:
+                print(f"=== Generate image for index {i} ===")
+                generate_index_img(i)
+                
+        ## Evaluate CLIP scores for all images   
+        def calculate_clip_score(images, prompts):
+            images_int = (images * 255).astype("uint8")
+            clip_score = clip_score_fn(torch.from_numpy(images_int).permute(0, 3, 1, 2), prompts).detach()
+            return round(float(clip_score), 4)
+        
+        def remove_black_images(images, prompts):
+            prompts_ = prompts.copy()
+            black_imgs = []
+            for i, img_ in enumerate(concat_images):
+                if img_.mean()==0:
+                    black_imgs.append(i)
+            for i in black_imgs[::-1]:
+                prompts_.pop(i)
+            clean_images = np.delete(images, black_imgs, 0)
+            
+            return clean_images, prompts_
+        
+        prompts = []
+        eval_images = []
+        for idx in imgs_idx:
+            for seed in range(len(imgs_idx[idx])):
+                for i, img_ in enumerate(imgs_idx[idx][seed]):
+                    prompts.append(prompts_idx[i])
+                    eval_images.append(np.array(img_))
+                    
+        concat_images = np.concatenate([eval_images])
+        clean_images, clean_prompts = remove_black_images(concat_images, prompts)
+        clip_score_fn = partial(clip_score, model_name_or_path="openai/clip-vit-base-patch16")
+        sd_clip_score = calculate_clip_score(clean_images, clean_prompts)
+        print(f"{args.model}, {args.num_inference_steps}, with{'out'*args.wo_modulation} dense diffusion used")
+        print(f"CLIP score: {sd_clip_score}")
