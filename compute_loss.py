@@ -146,12 +146,13 @@ def extract_attribution_indices(doc):
     # doc = parser(prompt)
     subtrees = []
     modifiers = ["amod", "nmod", "compound", "npadvmod", "advmod", "acomp"]
-
-    for w in doc:
+    total_idxs = []
+    for idx, w in enumerate(doc):
         if w.pos_ not in ["NOUN", "PROPN"] or w.dep_ in modifiers:
             continue
         subtree = []
         stack = []
+        total_idx = []
         for child in w.children:
             if child.dep_ in modifiers:
                 subtree.append(child)
@@ -164,8 +165,12 @@ def extract_attribution_indices(doc):
                 stack.extend(node.children)
         if subtree:
             subtree.append(w)
-            subtrees.append(subtree)
-    return subtrees
+            total_idx.append(idx+1)
+        subtrees.append(subtree)
+        if total_idx != []:
+            total_idxs.append(total_idx)
+
+    return subtrees, total_idxs
 
 def extract_attribution_indices_with_verbs(doc):
     '''This function specifically addresses cases where a verb is between
@@ -175,11 +180,13 @@ def extract_attribution_indices_with_verbs(doc):
     subtrees = []
     modifiers = ["amod", "nmod", "compound", "npadvmod", "advmod", "acomp",
                  'relcl']
-    for w in doc:
+    total_idxs = []
+    for idx, w in enumerate(doc):
         if w.pos_ not in ["NOUN", "PROPN"] or w.dep_ in modifiers:
             continue
         subtree = []
         stack = []
+        total_idx = []
         for child in w.children:
             if child.dep_ in modifiers:
                 if child.pos_ not in ['AUX', 'VERB']:
@@ -195,8 +202,11 @@ def extract_attribution_indices_with_verbs(doc):
                 stack.extend(node.children)
         if subtree:
             subtree.append(w)
-            subtrees.append(subtree)
-        return subtrees
+            total_idx.append(idx+1)
+        subtrees.append(subtree)
+        if total_idx != []:
+            total_idxs.append(total_idx)
+    return subtrees, total_idxs
 
 def extract_attribution_indices_with_verb_root(doc):
     '''This function specifically addresses cases where a verb is between
@@ -205,9 +215,11 @@ def extract_attribution_indices_with_verb_root(doc):
 
     subtrees = []
     modifiers = ["amod", "nmod", "compound", "npadvmod", "advmod", "acomp"]
-    for w in doc:
+    total_idxs = []
+    for idx, w in enumerate(doc):
         subtree = []
         stack = []
+        total_idx = []
 
         # if w is a verb/aux and has a noun child and a modifier child, add them to the stack
         if w.pos_ != 'AUX' or w.dep_ in modifiers:
@@ -233,8 +245,11 @@ def extract_attribution_indices_with_verb_root(doc):
         if subtree:
             if w.pos_ not in ['AUX']:
                 subtree.append(w)
+                total_idx.append(idx+1)
             subtrees.append(subtree)
-    return subtrees
+        if total_idx != []:
+            total_idxs.append(total_idx)
+    return subtrees, total_idxs
 
 def calculate_negative_loss(
         attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp

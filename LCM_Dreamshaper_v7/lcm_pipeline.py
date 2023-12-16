@@ -38,6 +38,19 @@ from compute_loss import get_attention_map_index_to_wordpiece, split_indices, ca
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+
+def attention2Mod(pipe, mod_forward):
+        for n, _module in pipe.unet.up_blocks.named_modules():
+            if _module.__class__.__name__ == "Attention":
+                _module.__class__.__call__ = mod_forward
+
+
+def attention2Orig(pipe, mod_orig):
+    for n, _module in pipe.unet.up_blocks.named_modules():
+        if _module.__class__.__name__ == "Attention":
+            _module.__class__.__call__ = mod_orig
+
+
 class LatentConsistencyModelPipeline(DiffusionPipeline):
     def __init__(
         self,
@@ -48,10 +61,12 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         scheduler: None,
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPImageProcessor,
-        requires_safety_checker: bool = True
+        
+        requires_safety_checker: bool = True, 
+        
     ):
         super().__init__()
-
+        print(f"hello baby!!!!!!!!!!!!!!")
         #! Start Code for syngen
         self.parser = spacy.load("en_core_web_trf")
         self.subtrees_indices = None
@@ -71,10 +86,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         
     def _aggregate_and_get_attention_maps_per_token(self):
-        
         # new_step_store =  {"up": step_store["up_cross"], "down": step_store["down_cross"], "mid": step_store["mip_cross"]}
         # self.attention_store.between_steps(new_step_store)
-        print(f"attn_map :{self.attention_store.get_average_attention()}")
         # if self.attention_store.get_average_attention() != {}:
         #     attention_maps = self.attention_store.aggregate_attention(
         #         from_where=("up", "down", "mid"),
@@ -87,13 +100,15 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         # attention_maps = self.attention_store.aggregate_attention(
         #     from_where=("up", "down", "mid"),
         # )
-        for location in ['down','up']:
-            for item in attn_stores[f"{location}_{'cross'}"]:
-                print(F"item: {item}")
-        attention_maps_list = _get_attention_maps_list(
+        attention_maps = self.attention_store.aggregate_attention(
+            from_where=("up", "down", "mid"),
+        )
+
+        attention_maps_list = self._get_attention_maps_list(
             attention_maps=attention_maps
         )
-       
+
+        # attention_maps_list = torch.tensor(attention_maps_list, requires_grad=True, device=self.device)
         return attention_maps_list
 
     @staticmethod
@@ -102,7 +117,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
     ) -> torch.Tensor:
         """Update the latent according to the computed loss."""
         grad_cond = torch.autograd.grad(
-            loss.requires_grad_(True), [latents], retain_graph=True
+            loss.requires_grad_(True), [latents], retain_graph=True,  allow_unused=True
         )[0]
         latents = latents - step_size * grad_cond
         return latents
@@ -125,7 +140,6 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             attn_procs[name] = AttendExciteAttnProcessor(
                 attnstore=self.attention_store, place_in_unet=place_in_unet
             )
-
 
      
         self.unet.set_attn_processor(attn_procs)
@@ -230,9 +244,9 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
     def prepare_latents(self, batch_size, num_channels_latents, height, width, dtype, device, latents=None):
         shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
         if latents is None:
-            latents = torch.randn(shape, dtype=dtype).to(device)
+            latents = torch.randn(shape, dtype=dtype, device=device, requires_grad=True)
         else:
-            latents = latents.to(device)
+            latents = torch.tensor(latents, device=device, requires_grad=True)
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
         return latents
@@ -279,6 +293,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         return_dict: bool = True,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         parsed_prompt: str=None, 
+        mod_forward: None = None, 
+        mod_orig: None = None, 
         ):
 
         r"""
@@ -360,10 +376,16 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         do_classifier_free_guidance = False
 
         # NEW - use parsed_prompt instead of prompt
-        if parsed_prompt:
-          self.doc = parsed_prompt
-        else:
-          self.doc = self.parser(prompt[0])
+        # if parsed_prompt:
+        # #   self.doc = parsed_prompt
+        #     self.doc = parsed_prompt
+        # else:
+        #     print(f"prompt: {prompt}, parsed : {self.parser(prompt[0])}")
+        #     self.doc = self.parser(prompt[0])
+
+        print(f"prompt: {prompt}, parsed : {self.parser(prompt)}")
+        self.doc = self.parser(prompt)
+        # attention2Mod(self, mod_forward)
         
         #! End Code for syngen
         
@@ -411,12 +433,14 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             latents,
         )
 
+        print(f"latents: {latents}")
+        
+
          #! Start Code for syngen
         # NEW - stores the attention calculated in the unet
         if attn_res is None:
             attn_res = int(np.ceil(width / 32)), int(np.ceil(height / 32))
         self.attention_store = AttentionStore(attn_res)
-
         self.register_attention_control()
 
         # NEW
@@ -445,7 +469,9 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
 
                 # NEW
                 if i < 25:
-
+                    print(f"start origin!!!!!!!")
+                    # attention2Orig(self, mod_orig)
+                    
                     latents = self._syngen_step(
                         latents,
                         text_embeddings,
@@ -456,40 +482,42 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                         prompt,
                         max_iter_to_alter=25,
                     )
+                    print(f"finish origin!!!!!!!")
+                    # attention2Mod(self, mod_forward)
                 
                 
-                with torch.no_grad():
-                    # expand the latents if we are doing classifier free guidance
-                    latent_model_input = (
-                        torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                    )
-                    latent_model_input = self.scheduler.scale_model_input(
-                        latent_model_input, t
-                    )
+                # with torch.no_grad():
+                # expand the latents if we are doing classifier free guidance
+                latent_model_input = (
+                    torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                )
+                latent_model_input = self.scheduler.scale_model_input(
+                    latent_model_input, t
+                )
 
-                    latents = latent_model_input
+                # latents = latent_model_input
 
-                    #! End Code for syngen
+                #! End Code for syngen
 
 
-                    # model prediction (v-prediction, eps, x)
-                    model_pred = self.unet(
-                        latents,
-                        ts,
-                        timestep_cond=w_embedding,
-                        encoder_hidden_states=prompt_embeds,
-                        cross_attention_kwargs=cross_attention_kwargs, 
-                        return_dict=False
-                    )[0]
+                # model prediction (v-prediction, eps, x)
+                model_pred = self.unet(
+                    latent_model_input,
+                    ts,
+                    timestep_cond=w_embedding,
+                    encoder_hidden_states=prompt_embeds,
+                    cross_attention_kwargs=cross_attention_kwargs, 
+                    return_dict=False
+                )[0]
 
-                    # compute the previous noisy sample x_t -> x_t-1
-                    latents, denoised = self.scheduler.step(model_pred, i, t, latents, return_dict=False)
-                    
-                    # # call the callback, if provided
-                    # if i == len(timesteps) - 1:
-                    progress_bar.update()
-                    torch.cuda.empty_cache()
-            
+                # compute the previous noisy sample x_t -> x_t-1
+                latents, denoised = self.scheduler.step(model_pred, i, t, latents, return_dict=False)
+                
+                # # call the callback, if provided
+                # if i == len(timesteps) - 1:
+                progress_bar.update()
+                torch.cuda.empty_cache()
+        
         if not output_type == "latent":
             image = self.vae.decode(denoised / self.vae.config.scaling_factor, return_dict=False)[0]
             image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
@@ -528,8 +556,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             for latent, text_embedding in zip(latents, text_embeddings):
                 # Forward pass of denoising with text conditioning
                 latent = latent.unsqueeze(0)
+                
                 text_embedding = text_embedding.unsqueeze(0)
-                torch.cuda.empty_cache()
                 self.unet(
                     latent,
                     t,
@@ -540,6 +568,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 self.unet.zero_grad()
                 # Get attention maps
                 attention_maps = self._aggregate_and_get_attention_maps_per_token()
+        
                 loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt)
                 # Perform gradient update
                 if i < max_iter_to_alter:
@@ -573,23 +602,26 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             prompt: Union[str, List[str]],
             attn_map_idx_to_wp,
     ) -> torch.Tensor:
-        if not self.subtrees_indices:
-          self.subtrees_indices = self._extract_attribution_indices(prompt)
+        # if not self.subtrees_indices:
+        #   self.subtrees_indices = self._extract_attribution_indices(prompt)
+        self.subtrees_indices = self._extract_attribution_indices(prompt)
         subtrees_indices = self.subtrees_indices
         loss = 0
 
         for subtree_indices in subtrees_indices:
             noun, modifier = split_indices(subtree_indices)
             all_subtree_pairs = list(itertools.product(noun, modifier))
+            print(f"all_subtree_pairs: {all_subtree_pairs}, subtree_indices: {subtree_indices}")
             positive_loss, negative_loss = self._calculate_losses(
                 attention_maps,
                 all_subtree_pairs,
                 subtree_indices,
                 attn_map_idx_to_wp,
             )
-            loss += positive_loss
-            torch.cuda.empty_cache()
-            # loss += negative_loss
+            print(f"loss: {loss}, positive_loss: {positive_loss}, negative_loss: {negative_loss}")
+            loss = loss + positive_loss[0]
+            loss = loss + negative_loss[0]
+            
 
         return loss
 
@@ -605,7 +637,9 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         for pair in all_subtree_pairs:
             noun, modifier = pair
             positive_loss.append(
-                calculate_positive_loss(attention_maps, modifier, noun)
+                calculate_positive_loss(
+                    attention_maps, modifier, noun
+                )
             )
             negative_loss.append(
                 calculate_negative_loss(
@@ -613,8 +647,9 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 )
             )
 
-        positive_loss = sum(positive_loss)
-        negative_loss = sum(negative_loss)
+        # positive_loss = torch.sum(positive_loss)
+        # negative_loss = torch.sum(negative_loss)
+    
 
         return positive_loss, negative_loss
 
@@ -663,23 +698,28 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
 
     def _extract_attribution_indices(self, prompt):
         # extract standard attribution indices
-        pairs = extract_attribution_indices(self.doc)
+        print(f"prompt: {self.doc}")
+        pairs, idxs = extract_attribution_indices(self.doc)
 
         # extract attribution indices with verbs in between
-        pairs_2 = extract_attribution_indices_with_verb_root(self.doc)
-        pairs_3 = extract_attribution_indices_with_verbs(self.doc)
+        pairs_2, idxs_2 = extract_attribution_indices_with_verb_root(self.doc)
+        pairs_3, idxs_3 = extract_attribution_indices_with_verbs(self.doc)
         # make sure there are no duplicates
         pairs = unify_lists(pairs, pairs_2, pairs_3)
 
+        unified_list = idxs + idxs_2 + idxs_3
+        sorted_list = sorted(unified_list, key=len)
 
         print(f"Final pairs collected: {pairs}")
         paired_indices = self._align_indices(prompt, pairs)
+        print(f"paired_indices: {paired_indices}")
+        paired_indices = [[2, 5], [18, 19], [23, 24], [28, 29], [34, 35]]
         return paired_indices
 
     def _get_attention_maps_list(
             self, attention_maps: torch.Tensor
     ) -> List[torch.Tensor]:
-        attention_maps *= 100
+        attention_maps = attention_maps * 100
         attention_maps_list = [
             attention_maps[:, :, i] for i in range(attention_maps.shape[2])
         ]

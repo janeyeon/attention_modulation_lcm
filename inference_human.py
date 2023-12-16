@@ -50,6 +50,7 @@ python inference_densediff.py --model LCM --batch_size 1 -s 16 -w -idx 1
 """
 
 if __name__ == '__main__':
+    torch.autograd.set_detect_anomaly(True)
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='LCM', choices=['LCM', 'SD'])
     parser.add_argument('--batch_size', type=int, default=1)
@@ -91,14 +92,6 @@ if __name__ == '__main__':
     
     ## Load Model
     if args.model == 'LCM':
-        # pipe = DiffusionPipeline.from_pretrained("SimianLuo/LCM_Dreamshaper_v7")
-        # pipe.to(device=device, dtype=torch.float16)
-        # num_inference_steps = num_inference_steps
-        # lcm_origin_steps = 50
-        # pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
-        # pipe.scheduler.set_timesteps(num_inference_steps=num_inference_steps,
-        #                              original_inference_steps=lcm_origin_steps,
-        #                              device=device)
 
         from LCM_Dreamshaper_v7.lcm_pipeline import LatentConsistencyModelPipeline
         from LCM_Dreamshaper_v7.lcm_scheduler import LCMScheduler
@@ -144,6 +137,13 @@ if __name__ == '__main__':
         # LCM Pipeline:
         pipe = LatentConsistencyModelPipeline(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet, scheduler=scheduler, safety_checker=safety_checker, feature_extractor=feature_extractor)
         pipe = pipe.to("cuda")
+        
+        # to save mod origin
+        for _module in pipe.unet.modules():
+            n = _module.__class__.__name__
+            if n == "Attention":
+                mod_orig = _module.__class__.__call__
+
     else:
         pipe = diffusers.StableDiffusionPipeline.from_pretrained(
             "runwayml/stable-diffusion-v1-5",
@@ -173,7 +173,6 @@ if __name__ == '__main__':
 
     def get_attention_maps_per_token(self):
         global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
-        print(f"hello!!!!!!!!!!!!!!!!!!!!!!!!")
         from_where=("up", "down", "mid")
         out = []
         # res : 사이즈 다를 수도 
@@ -192,30 +191,50 @@ if __name__ == '__main__':
         )
         
         return attention_maps_list
-    def extract_attribution_indices(self, prompt):
-        global prompts, attn_prompt
-        # extract standard attribution indices
-        # pairs = extract_attribution_indices(self.doc)
 
-        # # extract attribution indices with verbs in between
-        # pairs_2 = extract_attribution_indices_with_verb_root(self.doc)
-        # pairs_3 = extract_attribution_indices_with_verbs(self.doc)
-        # # make sure there are no duplicates
-        # pairs = unify_lists(pairs, pairs_2, pairs_3)
-        prompt = prompts[0]
-        pairs = attn_prompt
-        print(f"Final pairs collected: {pairs}")
-        # paired_indices = self._align_indices(prompt, pairs)
-        count = 0
-        paired_indices = []
-        for pair in pairs:
-            text = []
-            for _ in pair:
-                text.append(count)
-                count += 1
-            paired_indices.append(text)
-        print(f"paired_indices: {paired_indices}")
-        return paired_indices
+    # def extract_attribution_indices(self, prompt):
+    #     global prompts, attn_prompt
+    #     # extract standard attribution indices
+    #     # pairs = extract_attribution_indices(self.doc)
+
+    #     # # # extract attribution indices with verbs in between
+    #     # # pairs_2 = extract_attribution_indices_with_verb_root(self.doc)
+    #     # # pairs_3 = extract_attribution_indices_with_verbs(self.doc)
+    #     # # # make sure there are no duplicates
+    #     # # pairs = unify_lists(pairs, pairs_2, pairs_3)
+    #     # prompt = prompts[0]
+    #     # pairs = attn_prompt
+    #     # print(f"Final pairs collected: {pairs}")
+    #     # # paired_indices = self._align_indices(prompt, pairs)
+    #     # # [['The', 'Legend', 'of', 'Zelda', 'landscape,', 'four', 'girls', 'are', 'dancing', 'on', 'the', 'ground', ''], ['a', 'girl', 'wearing', 'a', 'red', 'dress'], ['a', 'girl', 'wearing', 'pink', 'dress'], ['a', 'girl', 'wearing', 'blue', 'dress'], ['a', 'girl', 'wearing', 'a', 'yellow', 'dress']]
+    #     # # [[ 3, 4], [14, 17, 18], [20, 22, 23], [25, 27, 28], [ 30, 33, 34]]
+    #     # count = 0
+    #     # paired_indices = []
+    #     # for pair in pairs:
+    #     #     text = []
+    #     #     for _ in pair:
+    #     #         text.append(count)
+    #     #         count += 1
+    #     #     paired_indices.append(text)
+    #     # paired_indices = [[ 3, 4], [14, 17, 18], [20, 22, 23], [25, 27, 28], [ 30, 33, 34]]
+    #     # print(f"paired_indices: {paired_indices}")
+
+
+
+
+    #     pairs = extract_attribution_indices(self.doc)
+
+    #     # extract attribution indices with verbs in between
+    #     pairs_2 = extract_attribution_indices_with_verb_root(self.doc)
+    #     pairs_3 = extract_attribution_indices_with_verbs(self.doc)
+    #     # make sure there are no duplicates
+    #     pairs = unify_lists(pairs, pairs_2, pairs_3)
+
+
+    #     print(f"Final pairs collected: {pairs}")
+    #     paired_indices = self._align_indices(prompt, pairs)
+
+    #     return paired_indices
 
     ## attention modulation function
     def mod_forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, temb=None):
@@ -288,9 +307,8 @@ if __name__ == '__main__':
 
             sim[batch_idx:] += (mask>0)*size_reg*w_reg*treg*(max_value-sim[batch_idx:])
             sim[batch_idx:] -= ~(mask>0)*size_reg*w_reg*treg*(sim[batch_idx:]-min_value)
-
             attention_probs = sim.softmax(dim=-1)
-            attention_probs = attention_probs.to(dtype)
+            attention_probs = attention_probs.to( dtype=dtype, device=device)
         else: # get original attention
             attention_probs = self.get_attention_scores(query, key, attention_mask)
         
@@ -317,10 +335,23 @@ if __name__ == '__main__':
 
         return hidden_states
 
+
+    def attention2Mod(pipe, mod_forward, curr_place):
+        for n, _module in pipe.unet.up_blocks.named_modules():
+            if _module.__class__.__name__ == "Attention":
+                _module.__class__.__call__ = mod_forward
+
+
+    def attention2Orig(pipe, mod_orig, place_orig):
+        for n, _module in pipe.unet.up_blocks.named_modules():
+            if _module.__class__.__name__ == "Attention":
+                _module.__class__.__call__ = mod_orig
+
+
     
     # change _aggregate_and_get_attention_maps_per_token function 
     pipe.__class__._aggregate_and_get_attention_maps_per_token = get_attention_maps_per_token
-    pipe.__class__._extract_attribution_indices = extract_attribution_indices
+    # pipe.__class__._extract_attribution_indices = extract_attribution_indices
     for _module in pipe.unet.modules():
         n = _module.__class__.__name__
         
@@ -328,6 +359,9 @@ if __name__ == '__main__':
             for place in ['Up', 'Down', 'Mid']:
                 if place in n:
                     curr_place = place
+
+        # if n == "Attention":
+        #     _module.place_in_unet = curr_place
 
         if n == "Attention":
             _module.__class__.__call__ = mod_forward
@@ -446,15 +480,17 @@ if __name__ == '__main__':
         # with torch.no_grad():
         latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
         if args.model == 'LCM':
-            with torch.autocast('cuda'):
-                image = pipe(
-                            prompt=prompts[:1][0]*bsz, 
-                            latents=latents,
-                            num_inference_steps=num_inference_steps,
-                            # prompt_embeds=text_cond,
-                            lcm_origin_steps=lcm_origin_steps,
-                            guidance_scale=8.0
-                            ).images
+            # with torch.autocast('cuda'):
+            
+            image = pipe(
+                        prompt=prompts[:1][0]*bsz, 
+                        latents=latents,
+                        num_inference_steps=num_inference_steps,
+                        lcm_origin_steps=lcm_origin_steps,
+                        guidance_scale=8.0, 
+                        mod_forward=mod_forward, 
+                        mod_orig=mod_orig
+                        ).images
         else:
             image = pipe(prompts[:1]*bsz, latents=latents).images
 
@@ -491,6 +527,8 @@ if __name__ == '__main__':
         generate_index_img(i)
         if args.attention: 
             cas, sas = get_attention_timesteps(pipe, attentions_idx[i], prompts_idx[i], 24, ['down','up'], 0, 2)
-            save_images_into_one(cas, config, f'attention_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png')
+            img_name= f'attention_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png'
+            save_images_into_one(cas, config, img_name)
             torch.cuda.empty_cache()
+            print(f"saved at {img_name}")
     # pdb.set_trace()
