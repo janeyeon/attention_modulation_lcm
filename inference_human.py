@@ -182,7 +182,7 @@ if __name__ == '__main__':
         for location in from_where:
             for item in step_store[f"{location}_cross"]:
                 if item.shape[1] == num_pixels:
-                    cross_maps = item.reshape(-1, res, res, item.shape[-1])[0]
+                    cross_maps = torch.sum(item.reshape(-1, res, res, item.shape[-1]), dim=0)
                     print(f"cross_maps: {cross_maps.shape}")
                     # out.append(cross_maps)
         attention_maps = cross_maps
@@ -284,7 +284,7 @@ if __name__ == '__main__':
         
         torch.cuda.empty_cache()
         # modulate attention with dense diffusion
-        if (COUNT/num_attn_layers < num_inference_steps*reg_part):
+        if (COUNT/num_attn_layers < num_inference_steps*reg_part*2):
             mod_counts.append(COUNT)
             dtype = query.dtype
             if self.upcast_attention:
@@ -528,7 +528,7 @@ if __name__ == '__main__':
         if args.attention: 
             cas, sas = get_attention_timesteps(pipe, attentions_idx[i], prompts_idx[i], 24, ['down','up'], 0, 2)
             img_name= f'attention_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png'
+            print(f"saved at {img_name}")
             save_images_into_one(cas, config, img_name)
             torch.cuda.empty_cache()
-            print(f"saved at {img_name}")
     # pdb.set_trace()

@@ -433,7 +433,6 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             latents,
         )
 
-        print(f"latents: {latents}")
         
 
          #! Start Code for syngen
@@ -569,7 +568,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 # Get attention maps
                 attention_maps = self._aggregate_and_get_attention_maps_per_token()
         
-                loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt)
+                loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt) 
                 # Perform gradient update
                 if i < max_iter_to_alter:
                     if loss != 0:
@@ -618,7 +617,6 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 subtree_indices,
                 attn_map_idx_to_wp,
             )
-            print(f"loss: {loss}, positive_loss: {positive_loss}, negative_loss: {negative_loss}")
             loss = loss + positive_loss[0]
             loss = loss + negative_loss[0]
             
