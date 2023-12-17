@@ -33,7 +33,10 @@ from diffusers.utils import (
     replace_example_docstring,
 )
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
+from gaussian_smoothing import GaussianSmoothing
 
+
+from ptp_utils import AttentionStore, aggregate_attention
 from compute_loss import get_attention_map_index_to_wordpiece, split_indices, calculate_positive_loss, calculate_negative_loss, get_indices, start_token, end_token, align_wordpieces_indices, extract_attribution_indices, extract_attribution_indices_with_verbs, extract_attribution_indices_with_verb_root
 from concentration_loss import calculate_concentration_loss
 
@@ -64,6 +67,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         feature_extractor: CLIPImageProcessor,
         
         requires_safety_checker: bool = True, 
+        generator:torch.Generator = None,
         
     ):
         super().__init__()
@@ -72,6 +76,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         self.parser = spacy.load("en_core_web_trf")
         self.subtrees_indices = None
         self.doc = None
+        self.generator = generator
         #! End Code for syngen
         
         self.register_modules(
@@ -85,7 +90,227 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
+    
+    def _encode_prompt(
+        self,
+        prompt,
+        device,
+        num_images_per_prompt,
+        do_classifier_free_guidance,
+        negative_prompt=None,
+        prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+    ):
+        r"""
+        Encodes the prompt into text encoder hidden states.
+        Args:
+             prompt (`str` or `List[str]`, *optional*):
+                prompt to be encoded
+            device: (`torch.device`):
+                torch device
+            num_images_per_prompt (`int`):
+                number of images that should be generated per prompt
+            do_classifier_free_guidance (`bool`):
+                whether to use classifier free guidance or not
+            negative_ prompt (`str` or `List[str]`, *optional*):
+                The prompt or prompts not to guide the image generation. If not defined, one has to pass
+                `negative_prompt_embeds`. instead. If not defined, one has to pass `negative_prompt_embeds`. instead.
+                Ignored when not using guidance (i.e., ignored if `guidance_scale` is less than `1`).
+            prompt_embeds (`torch.FloatTensor`, *optional*):
+                Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
+                provided, text embeddings will be generated from `prompt` input argument.
+            negative_prompt_embeds (`torch.FloatTensor`, *optional*):
+                Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
+                weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
+                argument.
+        """
+        if prompt is not None and isinstance(prompt, str):
+            batch_size = 1
+        elif prompt is not None and isinstance(prompt, list):
+            batch_size = len(prompt)
+        else:
+            batch_size = prompt_embeds.shape[0]
+
+        if prompt_embeds is None:
+            text_inputs = self.tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=self.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            text_input_ids = text_inputs.input_ids
+            untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
+
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+                text_input_ids, untruncated_ids
+            ):
+                removed_text = self.tokenizer.batch_decode(
+                    untruncated_ids[:, self.tokenizer.model_max_length - 1 : -1]
+                )
+                logger.warning(
+                    "The following part of your input was truncated because CLIP can only handle sequences up to"
+                    f" {self.tokenizer.model_max_length} tokens: {removed_text}"
+                )
+
+            if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
+                attention_mask = text_inputs.attention_mask.to(device)
+            else:
+                attention_mask = None
+
+            prompt_embeds = self.text_encoder(
+                text_input_ids.to(device),
+                attention_mask=attention_mask,
+            )
+            prompt_embeds = prompt_embeds[0]
+
+        prompt_embeds = prompt_embeds.to(dtype=self.text_encoder.dtype, device=device)
+
+        bs_embed, seq_len, _ = prompt_embeds.shape
+        # duplicate text embeddings for each generation per prompt, using mps friendly method
+        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
+
+        # get unconditional embeddings for classifier free guidance
+        if do_classifier_free_guidance and negative_prompt_embeds is None:
+            uncond_tokens: List[str]
+            if negative_prompt is None:
+                uncond_tokens = [""] * batch_size
+            elif type(prompt) is not type(negative_prompt):
+                raise TypeError(
+                    f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
+                    f" {type(prompt)}."
+                )
+            elif isinstance(negative_prompt, str):
+                uncond_tokens = [negative_prompt]
+            elif batch_size != len(negative_prompt):
+                raise ValueError(
+                    f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
+                    f" {prompt} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
+                    " the batch size of `prompt`."
+                )
+            else:
+                uncond_tokens = negative_prompt
+
+            max_length = prompt_embeds.shape[1]
+            uncond_input = self.tokenizer(
+                uncond_tokens,
+                padding="max_length",
+                max_length=max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+
+            if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
+                attention_mask = uncond_input.attention_mask.to(device)
+            else:
+                attention_mask = None
+
+            negative_prompt_embeds = self.text_encoder(
+                uncond_input.input_ids.to(device),
+                attention_mask=attention_mask,
+            )
+            negative_prompt_embeds = negative_prompt_embeds[0]
+
+        if do_classifier_free_guidance:
+            # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
+            seq_len = negative_prompt_embeds.shape[1]
+
+            negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.text_encoder.dtype, device=device)
+
+            negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
+            negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+
+            # For classifier free guidance, we need to do two forward passes.
+            # Here we concatenate the unconditional and text embeddings into a single batch
+            # to avoid doing two forward passes
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+
+        return text_inputs, prompt_embeds
+
+    def _compute_max_attention_per_index(self,
+                                         attention_maps: torch.Tensor,
+                                         indices_to_alter: List[int],
+                                         smooth_attentions: bool = False,
+                                         sigma: float = 0.5,
+                                         kernel_size: int = 3,
+                                         normalize_eot: bool = False) -> List[torch.Tensor]:
+        """ Computes the maximum attention value for each of the tokens we wish to alter. """
+        last_idx = -1
+        if normalize_eot:
+            prompt = self.prompt
+            if isinstance(self.prompt, list):
+                prompt = self.prompt[0]
+            last_idx = len(self.tokenizer(prompt)['input_ids']) - 1
+        attention_for_text = attention_maps[:, :, 1:last_idx]
+        attention_for_text = attention_for_text *  100
+        attention_for_text = torch.nn.functional.softmax(attention_for_text, dim=-1)
+
+        # Shift indices since we removed the first token
+        # indices_to_alter = indices_to_alter[1:]
+        # indices_to_alter = [index - 1 for index in indices_to_alter]
+
+        # Extract the maximum values
+        max_indices_list = []
+        print(f"indices_to_alter: {indices_to_alter}, attention_for_text: {attention_for_text.shape}")
+        for i in indices_to_alter:
+            image = attention_for_text[:, :, i]
+            # channel = image.shape[0]
+            if smooth_attentions:
+                smoothing = GaussianSmoothing(channels=1, kernel_size=kernel_size, sigma=sigma, dim=2).cuda()
+                # input = F.pad(image.unsqueeze(0).unsqueeze(0), (1, 1, 1, 1), mode='reflect')
+                input = F.pad(image.unsqueeze(0).unsqueeze(0), (1, 1, 1, 1), mode='reflect')
+                image = smoothing(input).squeeze(0).squeeze(0)
+            max_indices_list.append(image.max())
+        return max_indices_list
+
+    # def _aggregate_and_get_max_attention_per_token(self, attention_store: AttentionStore,
+    #                                                indices_to_alter: List[int],
+    #                                                attention_res: int = 16,
+    #                                                smooth_attentions: bool = False,
+    #                                                sigma: float = 0.5,
+    #                                                kernel_size: int = 3,
+    #                                                normalize_eot: bool = False):
+    #     """ Aggregates the attention for each token and computes the max activation value for each token to alter. """
+    #     attention_maps = aggregate_attention(
+    #         attention_store=attention_store,
+    #         res=attention_res,
+    #         from_where=("up", "down", "mid"),
+    #         is_cross=True,
+    #         select=0)
         
+
+    #     max_attention_per_index = self._compute_max_attention_per_index(
+    #         attention_maps=attention_maps,
+    #         indices_to_alter=indices_to_alter,
+    #         smooth_attentions=smooth_attentions,
+    #         sigma=sigma,
+    #         kernel_size=kernel_size,
+    #         normalize_eot=normalize_eot)
+        
+    #     return max_attention_per_index
+
+    def _aggregate_and_get_max_attention_per_token(self, attention_store: AttentionStore,
+                                                   indices_to_alter: List[int],
+                                                   attention_res: int = 16,
+                                                   smooth_attentions: bool = False,
+                                                   sigma: float = 0.5,
+                                                   kernel_size: int = 3,
+                                                   normalize_eot: bool = False):
+        pass
+
+    @staticmethod
+    def _compute_ptp_loss(max_attention_per_index: List[torch.Tensor], return_losses: bool = False) -> torch.Tensor:
+        """ Computes the attend-and-excite loss using the maximum attention value for each token. """
+        losses = [max(0, 1. - curr_max) for curr_max in max_attention_per_index]
+        loss = max(losses)
+        if return_losses:
+            return loss, losses
+        else:
+            return loss    
+    
+    
+    
     def _aggregate_and_get_attention_maps_per_token(self):
         
         attention_maps = self.attention_store.aggregate_attention(
@@ -96,8 +321,61 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             attention_maps=attention_maps
         )
 
+        print(f"max_indices_list: {torch.tensor(attention_maps_list).shape}")
+
+        
+
         # attention_maps_list = torch.tensor(attention_maps_list, requires_grad=True, device=self.device)
         return attention_maps_list
+    
+    def _aggregate_and_get_max_attention_per_token_gaussian(self, tokenizer):
+        pass 
+
+    def _compute_max_attention_per_index_gaussian(self, prompt, attention_maps, layout_count):
+        sigma = 0.5
+        kernel_size = 3
+        normalize_eot = True
+        smooth_attentions = True
+        # indices_to_alter = self.get_indices_to_alter(prompt)
+        #! need to fix here!!!!!
+        indices_to_alter = layout_count[1] 
+
+        # last_idx = -1
+        # if normalize_eot:
+        #     prompt = prompt
+            
+        #     last_idx = len(self.tokenizer(prompt)['input_ids']) - 1
+        # attention_for_text = attention_maps[:, :, 1:last_idx]
+        attention_for_text = attention_maps
+        attention_for_text = attention_for_text * 100
+
+
+        attention_for_text = torch.nn.functional.softmax(attention_for_text, dim=-1)
+
+        # Shift indices since we removed the first token
+        # indices_to_alter = [index - 1 for index in indices_to_alter]
+
+
+        
+        # Extract the maximum values
+        max_indices_list = []
+        # for i in indices_to_alter:
+        for i in range(77):
+            image = attention_for_text[:, :, i]
+            if smooth_attentions:
+                smoothing = GaussianSmoothing(channels=1, kernel_size=kernel_size, sigma=sigma, dim=2).cuda()
+                input = F.pad(image.unsqueeze(0).unsqueeze(0), (1, 1, 1, 1), mode='reflect')
+                image = smoothing(input).squeeze(0).squeeze(0)
+            max_indices_list.append(image.max())
+
+        print(f"max_indices_list: {torch.tensor(max_indices_list).shape}")
+
+        attention_maps_list = [
+            max_indices_list[:, :, i] for i in range(len(max_indices_list[0][0]))
+        ]
+
+        return attention_maps_list
+    
 
     @staticmethod
     def _update_latent(
@@ -132,7 +410,22 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
      
         self.unet.set_attn_processor(attn_procs)
         self.attention_store.num_att_layers = cross_att_count
+
+    def get_indices_to_alter(self, prompt: str) -> List[int]:
+        token_idx_to_word = {idx: self.tokenizer.decode(t)
+                            for idx, t in enumerate(self.tokenizer(prompt)['input_ids'])
+                            if 0 < idx < len(self.tokenizer(prompt)['input_ids']) - 1}
+        # pprint.pprint(token_idx_to_word)
+        # token_indices = input("Please enter the a comma-separated list indices of the tokens you wish to "
+        #                     "alter (e.g., 2,5): ")
+
+        token_indices = [[2, 5, 18, 19, 23, 24, 28, 29, 34, 35]]
+        # token_indices = input()
+        # token_indices = [int(i) for i in token_indices.split(",")]
+        # print(f"Altering tokens: {[token_idx_to_word[i] for i in token_indices]}")
+        return token_indices
     
+  
     def _encode_prompt(
         self,
         prompt,
@@ -232,7 +525,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
     def prepare_latents(self, batch_size, num_channels_latents, height, width, dtype, device, latents=None):
         shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
         if latents is None:
-            latents = torch.randn(shape, dtype=dtype, device=device, requires_grad=True)
+            latents = torch.randn(shape, dtype=dtype, device=device, requires_grad=True, generator=self.generator)
         else:
             latents = torch.tensor(latents, device=device, requires_grad=True)
         # scale the initial noise by the standard deviation required by the scheduler
@@ -281,7 +574,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         return_dict: bool = True,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         layouts: Optional[List[str]] = None, 
-        layout_count: Optional[List[int]] = None
+        layout_count: Optional[List[int]] = None,
         ):
 
         r"""
@@ -455,7 +748,6 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
 
                 # NEW
                 if i < 25:
-                    print(f"start origin!!!!!!!")
                     # attention2Orig(self, mod_orig)
                     
                     latents = self._syngen_step(
@@ -470,7 +762,6 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                         layouts=layouts, 
                         layout_count=layout_count
                     )
-                    print(f"finish origin!!!!!!!")
                     # attention2Mod(self, mod_forward)
                 
                 
@@ -539,27 +830,54 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             max_iter_to_alter=25,
             layouts=None,
             layout_count=None,
+            indices_to_alter=None
     ):
+        
+        indices_to_alter = self.get_indices_to_alter(prompt)[0]
+        print(f"indices_to_alter: {indices_to_alter}")
+        # indices_to_alter = indices_to_alter[1:]
+        # Shift indices since we removed the first token
+        # indices_to_alter = [index - 1 for index in indices_to_alter]
+
         with torch.enable_grad():
             latents = latents.clone().detach().requires_grad_(True)
             updated_latents = []
             for latent, text_embedding in zip(latents, text_embeddings):
                 # Forward pass of denoising with text conditioning
                 latent = latent.unsqueeze(0)
-                
+
+
+               
                 text_embedding = text_embedding.unsqueeze(0)
                 self.unet(
                     latent,
                     t,
                     encoder_hidden_states=text_embedding,
                     cross_attention_kwargs=cross_attention_kwargs,
-                    return_dict=False,
+                    return_dict=False
                 )[0]
                 self.unet.zero_grad()
+
+                # Get max activation value for each subject token
+                max_attention_per_index = self._aggregate_and_get_max_attention_per_token(
+                    attention_store=self.attention_store,
+                    indices_to_alter=indices_to_alter,
+                    attention_res=16,
+                    smooth_attentions=True,
+                    sigma=0.5,
+                    kernel_size=3,
+                    normalize_eot=False
+                    )
+                
+                ptp_loss, _ = self._compute_ptp_loss(max_attention_per_index, return_losses=True)
+                
                 # Get attention maps
+                # attention_maps = self._aggregate_and_get_max_attention_per_token_gaussian()
                 attention_maps = self._aggregate_and_get_attention_maps_per_token()
         
                 loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt, layouts=layouts, layout_count=layout_count) * 2
+                loss = loss + ptp_loss
+                # loss = ptp_loss
                 # Perform gradient update
                 if i < max_iter_to_alter:
                     if loss != 0:
@@ -597,7 +915,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
     ) -> torch.Tensor:
         # if not self.subtrees_indices:
         #   self.subtrees_indices = self._extract_attribution_indices(prompt)
-        self.subtrees_indices = self._extract_attribution_indices(prompt)
+        self.subtrees_indices = self._extract_attribution_indices(prompt, layout_count)
         subtrees_indices = self.subtrees_indices
         loss = 0
 
@@ -614,8 +932,8 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                     layout_count
                 )
                 loss = loss + positive_loss[0]
-                loss = loss + negative_loss[0]
-                loss = loss + concentration_loss[0]
+                # loss = loss + negative_loss[0]
+                loss = loss + concentration_loss[0] * 10
             
 
         return loss
@@ -636,7 +954,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         for pair in all_subtree_pairs:
             noun, modifier = pair
             for i, count in enumerate(layout_count):
-                if count[0] < modifier and count[1] > noun:
+                if count[0] <= modifier:
                     temp =  layouts[i].unsqueeze(0).float()
                     selected_layout = F.interpolate(temp, size=(64, 64), mode='bilinear').squeeze()
                     # selected_layout = selected_layout / max(selected_layout)
@@ -708,24 +1026,34 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         return paired_indices
 
 
-    def _extract_attribution_indices(self, prompt):
+    def _extract_attribution_indices(self, prompt, layout_count):
         # extract standard attribution indices
-        print(f"prompt: {self.doc}")
-        pairs, idxs = extract_attribution_indices(self.doc)
+        # print(f"prompt: {self.doc}")
+        # pairs, idxs = extract_attribution_indices(self.doc)
 
-        # extract attribution indices with verbs in between
-        pairs_2, idxs_2 = extract_attribution_indices_with_verb_root(self.doc)
-        pairs_3, idxs_3 = extract_attribution_indices_with_verbs(self.doc)
-        # make sure there are no duplicates
-        pairs = unify_lists(pairs, pairs_2, pairs_3)
+        # # extract attribution indices with verbs in between
+        # pairs_2, idxs_2 = extract_attribution_indices_with_verb_root(self.doc)
+        # pairs_3, idxs_3 = extract_attribution_indices_with_verbs(self.doc)
+        # # make sure there are no duplicates
+        # pairs = unify_lists(pairs, pairs_2, pairs_3)
 
-        unified_list = idxs + idxs_2 + idxs_3
-        sorted_list = sorted(unified_list, key=len)
+        # unified_list = idxs + idxs_2 + idxs_3
+        # sorted_list = sorted(unified_list, key=len)
 
-        print(f"Final pairs collected: {pairs}")
-        paired_indices = self._align_indices(prompt, pairs)
-        print(f"paired_indices: {paired_indices}")
+        # print(f"Final pairs collected: {pairs}")
+        # paired_indices = self._align_indices(prompt, pairs)
+        #  print(f"paired_indices: {paired_indices}")
         paired_indices = [[2, 5], [18, 19], [23, 24], [28, 29], [34, 35]]
+        
+        # paired_indices = []
+        # print(f"layout_count: {layout_count}")
+        # for idx, counts in enumerate(layout_count):
+        #     if idx > 0 :
+        #         l = list(range(counts[0]+1, counts[-1]+1))
+        #         paired_indices.append(l)
+
+
+        print(f"paired_indices: {paired_indices}")
         return paired_indices
 
     def _get_attention_maps_list(

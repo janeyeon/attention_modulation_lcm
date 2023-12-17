@@ -100,45 +100,7 @@ def concentration_loss(pred):
 def calculate_concentration_loss(attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp, selected_layout):
     src_indices = modifier
     dest_indices = noun
-    # if isinstance(src_indices, list) and isinstance(dest_indices, list):
-    #     wp_pos_loss_2 = [
-    #         concentration_loss(attention_maps[d])
-    #         for d in dest_indices
-    #     ]
-    #     wp_pos_loss_3 = [
-    #         concentration_loss(attention_maps[s])
-    #         for s in src_indices
-    #     ]
-    #     loss = (torch.mean(wp_pos_loss_2, dim=0) + torch.mean(wp_pos_loss_3, dim=0)) / 2
-    # elif isinstance(dest_indices, list):
-
-    #     wp_pos_loss_2 = [
-    #         concentration_loss(attention_maps[d])
-    #         for d in dest_indices
-    #     ]
-    #     wp_pos_loss_3 = [
-    #         concentration_loss(attention_maps[src_indices])
-    #     ]
-
-
-    #     loss = (torch.mean(wp_pos_loss_2, dim=0)+ wp_pos_loss_3) / 3
-
-    # elif isinstance(src_indices, list):
     
-    #     wp_pos_loss_2 = [
-    #         concentration_loss(attention_maps[s])
-    #         for s in src_indices
-    #     ]
-    #     wp_pos_loss_3 = [
-    #         concentration_loss(attention_maps[dest_indices])
-    #     ]
-    #     loss = (wp_pos_loss_2 + torch.mean(wp_pos_loss_3, dim=0)) / 3
-
-    # else:
-    #     wp_pos_loss_2 =  concentration_loss(attention_maps[src_indices])
-    #     wp_pos_loss_3 =  concentration_loss(attention_maps[dest_indices])
-    #     print(F"wp_pos_loss_2: {wp_pos_loss_2}, wp_pos_loss_3: {wp_pos_loss_3}")
-    #     loss = (wp_pos_loss_2 + wp_pos_loss_3) / 2
     new_src = [src_indices] if not isinstance(src_indices, list) else  src_indices
     new_dest = [dest_indices] if not isinstance(dest_indices, list) else  dest_indices
     total_indices = new_src + new_dest
@@ -150,10 +112,8 @@ def calculate_concentration_loss(attention_maps, modifier, noun, subtree_indices
         ]
         , dim = 0
     )
-    print(f"attention_maps: {attn_map.shape}")
 
     loss =  concentration_loss(attn_map)
     
     
-    print(f"concentration_loss: {loss}")
     return loss

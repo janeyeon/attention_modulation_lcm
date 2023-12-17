@@ -72,8 +72,8 @@ def calculate_positive_loss(attention_maps, modifier, noun, layout):
             _symmetric_kl(attention_maps[s], layout)
             for s in src_indices
         ]
-
-        positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
+        # positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
+        
     elif isinstance(dest_indices, list):
         wp_pos_loss_1 = [
             _symmetric_kl(attention_maps[src_indices], attention_maps[d])
@@ -86,9 +86,7 @@ def calculate_positive_loss(attention_maps, modifier, noun, layout):
         wp_pos_loss_3 = [
             _symmetric_kl(attention_maps[src_indices], layout)
         ]
-
-
-        positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
+        # positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
 
     elif isinstance(src_indices, list):
         wp_pos_loss_1 = [
@@ -103,16 +101,19 @@ def calculate_positive_loss(attention_maps, modifier, noun, layout):
         wp_pos_loss_3 = [
             _symmetric_kl(layout, attention_maps[dest_indices])
         ]
-        positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
+        # positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
 
     else:
-        wp_pos_loss_1 = _symmetric_kl(
+        wp_pos_loss_1 = [_symmetric_kl(
             attn_size(attention_maps[src_indices]), attn_size(attention_maps[dest_indices])
-        )
-        wp_pos_loss_2 =  _symmetric_kl(attn_size(attention_maps[src_indices]), layout)
-        wp_pos_loss_3 =  _symmetric_kl(layout, attn_size(attention_maps[dest_indices]))
+        )]
+        wp_pos_loss_2 =  [_symmetric_kl(attn_size(attention_maps[src_indices]), layout)]
+        wp_pos_loss_3 =  [_symmetric_kl(layout, attn_size(attention_maps[dest_indices]))]
         print(F"wp_pos_loss_1: {wp_pos_loss_1}, wp_pos_loss_2: {wp_pos_loss_2}, wp_pos_loss_3: {wp_pos_loss_3}")
-        positive_loss = (wp_pos_loss_1 + wp_pos_loss_2 + wp_pos_loss_3) / 2
+    seg_factor = 1
+    positive_loss = (max(wp_pos_loss_1) + max(wp_pos_loss_2) + max(wp_pos_loss_3)) / 3
+    # seg_factor = 1
+    # positive_loss = torch.mean(wp_pos_loss_1 + wp_pos_loss_2 * seg_factor + wp_pos_loss_3 * seg_factor, dim=0)
     print(f"positive_loss: {positive_loss}")
     return positive_loss
 

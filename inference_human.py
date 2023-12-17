@@ -50,7 +50,7 @@ python inference_densediff.py --model LCM --batch_size 1 -s 16 -w -idx 1
 """
 
 if __name__ == '__main__':
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='LCM', choices=['LCM', 'SD'])
     parser.add_argument('--batch_size', type=int, default=1)
@@ -79,6 +79,7 @@ if __name__ == '__main__':
     image_idx = args.key
     lcm_origin_steps = 50
     config = RunConfig()
+    generator = torch.Generator().manual_seed(args.seed)
     
 
 
@@ -88,8 +89,16 @@ if __name__ == '__main__':
     config.output_path = config.output_path /  image_idx
     os.makedirs(config.output_path, exist_ok=True)
 
+    # seed 
+    random.seed(args.seed)
 
-    
+    # NumPy
+    np.random.seed(args.seed)
+    # PyTorch
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)  # If using CUDA devices
+
+        
     ## Load Model
     if args.model == 'LCM':
 
@@ -135,7 +144,7 @@ if __name__ == '__main__':
 
 
         # LCM Pipeline:
-        pipe = LatentConsistencyModelPipeline(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet, scheduler=scheduler, safety_checker=safety_checker, feature_extractor=feature_extractor)
+        pipe = LatentConsistencyModelPipeline(vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet, scheduler=scheduler, safety_checker=safety_checker, feature_extractor=feature_extractor, generator=generator)
         pipe = pipe.to("cuda")
         
         # to save mod origin
@@ -183,6 +192,45 @@ if __name__ == '__main__':
         
         for location in from_where:
             for item in step_store[f"{location}_cross"]:
+                if item.shape[1] != num_pixels:
+                    out.append(item.reshape(-1, res, res, item.shape[-1]))
+                    # out.append(cross_maps)
+        out = torch.cat(out, dim=0)
+        out = out.sum(0) / out.shape[0]
+        attention_maps = out
+
+        attention_maps_list = self._get_attention_maps_list(
+            attention_maps=attention_maps
+        )
+        
+        return attention_maps_list
+    
+    def _aggregate_max_ftn(self, attention_store,
+                        indices_to_alter,
+                        attention_res: int = 16,
+                        smooth_attentions: bool = False,
+                        sigma: float = 0.5,
+                        kernel_size: int = 3,
+                        normalize_eot: bool = False):
+        """ Aggregates the attention for each token and computes the max activation value for each token to alter. """
+        # attention_maps = aggregate_attention(
+        #     attention_store=attention_store,
+        #     res=attention_res,
+        #     from_where=("up", "down", "mid"),
+        #     is_cross=True,
+        #     select=0)
+
+        global COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
+        from_where=("up", "down", "mid")
+        out = []
+        # res : 사이즈 다를 수도 
+        res = 24
+        # num_pixels = res ** 2
+        num_pixels = 144
+        # step_store[f"{location}_cross"] : 12 x 12 x 77
+        
+        for location in from_where:
+            for item in step_store[f"{location}_cross"]:
                 print(f"item.shape: {item.shape} in {location}")
                 if item.shape[1] != num_pixels:
                     out.append(item.reshape(-1, res, res, item.shape[-1]))
@@ -190,9 +238,44 @@ if __name__ == '__main__':
         out = torch.cat(out, dim=0)
         out = out.sum(0) / out.shape[0]
         attention_maps = out
-        attention_maps_list = self._get_attention_maps_list(
-            attention_maps=attention_maps
+        
+
+        max_attention_per_index = self._compute_max_attention_per_index(
+            attention_maps=attention_maps,
+            indices_to_alter=indices_to_alter,
+            smooth_attentions=smooth_attentions,
+            sigma=sigma,
+            kernel_size=kernel_size,
+            normalize_eot=normalize_eot)
+        print(f"max_attention_per_index: {max_attention_per_index}")
+        
+        return max_attention_per_index
+    
+    def get_attention_maps_per_token_gaussian(self):
+        global prompts, layout_count, COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
+        from_where=("up", "down", "mid")
+        out = []
+        # res : 사이즈 다를 수도 
+        res = 24
+        # num_pixels = res ** 2
+        num_pixels = 144
+        # step_store[f"{location}_cross"] : 12 x 12 x 77
+        
+        for location in from_where:
+            for item in step_store[f"{location}_cross"]:
+                if item.shape[1] != num_pixels:
+                    out.append(item.reshape(-1, res, res, item.shape[-1]))
+                    # out.append(cross_maps)
+        out = torch.cat(out, dim=0)
+        out = out.sum(0) / out.shape[0]
+        attention_maps = out
+
+        attention_maps_list = self._compute_max_attention_per_index_gaussian(
+            prompt=prompts[0], attention_maps=attention_maps, layout_count=layout_count
         )
+
+
+        
         
         return attention_maps_list
 
@@ -355,7 +438,9 @@ if __name__ == '__main__':
     
     # change _aggregate_and_get_attention_maps_per_token function 
     pipe.__class__._aggregate_and_get_attention_maps_per_token = get_attention_maps_per_token
-    # pipe.__class__._extract_attribution_indices = extract_attribution_indices
+    # pipe.__class__._aggregate_and_get_max_attention_per_token_gaussian = get_attention_maps_per_token_gaussian
+    pipe.__class__._aggregate_and_get_max_attention_per_token = _aggregate_max_ftn
+   # pipe.__class__._extract_attribution_indices = extract_attribution_indices
     for _module in pipe.unet.modules():
         n = _module.__class__.__name__
         
@@ -376,7 +461,7 @@ if __name__ == '__main__':
     
     ## Main function which generates modulated image
     def generate_index_img(idx):
-        global prompts, attn_prompt, COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
+        global prompts, layout_count, attn_prompt, COUNT, treg, sret, creg, sreg_maps, creg_maps, reg_sizes, text_cond, step_store, attn_stores
         
         global_prompt = group_dictionary['global_caption']
         global_W, global_H = group_dictionary['shape']
@@ -398,7 +483,7 @@ if __name__ == '__main__':
         count = 1 
         layout_count = []
         for single_instance in attn_prompt:
-            temp = [count, count+len(single_instance)]
+            temp = [count, count+len(single_instance)-1]
             layout_count.append(temp)
             count+=len(single_instance)
         print(f"layout_count: {layout_count}")
@@ -489,7 +574,7 @@ if __name__ == '__main__':
                       "down_self": [],  "mid_self": [],  "up_self": []}
 
         # with torch.no_grad():
-        latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=torch.Generator().manual_seed(args.seed)).to(device) 
+        latents = torch.randn(bsz,4,sp_sz,sp_sz, generator=generator).to(device) 
         if args.model == 'LCM':
             # with torch.autocast('cuda'):
             
@@ -500,7 +585,7 @@ if __name__ == '__main__':
                         lcm_origin_steps=lcm_origin_steps,
                         guidance_scale=8.0, 
                         layouts=layouts,
-                        layout_count=layout_count
+                        layout_count=layout_count,
                         ).images
         else:
             image = pipe(prompts[:1]*bsz, latents=latents).images
@@ -519,10 +604,10 @@ if __name__ == '__main__':
         os.makedirs(save_path, exist_ok=True)
 
         for i, img in enumerate(imgs):
-            img_name = f'{args.model}_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png'
+            img_n = f'{args.model}_' + img_name
             if img.size[0] > 512:
                 img = img.resize((512,512)) # in order to compare LCM with SD
-            img.save(str(save_path)+'/'+img_name)
+            img.save(str(save_path)+'/'+img_n)
         
         # return attn_stores
 
@@ -535,11 +620,11 @@ if __name__ == '__main__':
     hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
     for i in args.idx:
         print(f"=== Generate image for index {i} ===")
+        img_name= f'{hash_key}_seed{args.seed}_{args.num_inference_steps}_reg-ratio{reg_part:.1f}.png'
         generate_index_img(i)
         if args.attention: 
             cas, sas = get_attention_timesteps(pipe, attentions_idx[i], prompts_idx[i], 24, ['down','up'], 0, 2)
-            img_name= f'attention_{args.num_inference_steps}_reg-ratio{reg_part:.1f}_sreg{sreg}_creg{creg}_pow_time{args.pow_time}_{args.wo_modulation*"_woModulation"}_{hash_key}.png'
             print(f"saved at {img_name}")
-            save_images_into_one(cas, config, img_name)
+            save_images_into_one(cas, config, 'attention_' + img_name)
             torch.cuda.empty_cache()
     # pdb.set_trace()
