@@ -35,7 +35,7 @@ from diffusers.utils import (
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
 
 from compute_loss import get_attention_map_index_to_wordpiece, split_indices, calculate_positive_loss, calculate_negative_loss, get_indices, start_token, end_token, align_wordpieces_indices, extract_attribution_indices, extract_attribution_indices_with_verbs, extract_attribution_indices_with_verb_root
-
+from concentration_loss import *
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -87,20 +87,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         
     def _aggregate_and_get_attention_maps_per_token(self):
-        # new_step_store =  {"up": step_store["up_cross"], "down": step_store["down_cross"], "mid": step_store["mip_cross"]}
-        # self.attention_store.between_steps(new_step_store)
-        # if self.attention_store.get_average_attention() != {}:
-        #     attention_maps = self.attention_store.aggregate_attention(
-        #         from_where=("up", "down", "mid"),
-        #     )
-        #     attention_maps_list = _get_attention_maps_list(
-        #         attention_maps=attention_maps
-        #     )
-        # else:
-        #     attention_maps_list = []
-        # attention_maps = self.attention_store.aggregate_attention(
-        #     from_where=("up", "down", "mid"),
-        # )
+        
         attention_maps = self.attention_store.aggregate_attention(
             from_where=("up", "down", "mid"),
         )
@@ -572,7 +559,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 # Get attention maps
                 attention_maps = self._aggregate_and_get_attention_maps_per_token()
         
-                loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt, layouts=layouts, layout_count=layout_count) 
+                loss = self._compute_loss(attention_maps=attention_maps, prompt=prompt, layouts=layouts, layout_count=layout_count) * 2
                 # Perform gradient update
                 if i < max_iter_to_alter:
                     if loss != 0:
@@ -643,13 +630,14 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
     ):
         positive_loss = []
         negative_loss = []
+        concentration_loss = []
          
         for pair in all_subtree_pairs:
             noun, modifier = pair
             for i, count in enumerate(layout_count):
                 if count[0] < modifier and count[1] > noun:
                     temp =  layouts[i].unsqueeze(0).float()
-                    selected_layout = F.interpolate(temp, size=(32, 32), mode='bilinear').squeeze()
+                    selected_layout = F.interpolate(temp, size=(64, 64), mode='bilinear').squeeze()
                     # selected_layout = selected_layout / max(selected_layout)
                     # print(F"mzx: {max(selected_layout)}, min: {min(selected_layout)}")
                     break
@@ -663,6 +651,12 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                     attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp, selected_layout
                 )
             )
+
+            # concentration_loss.append(
+            #     calculate_concentration_loss(
+            #         attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp, selected_layout
+            #     )
+            # )
 
         # positive_loss = torch.sum(positive_loss)
         # negative_loss = torch.sum(negative_loss)

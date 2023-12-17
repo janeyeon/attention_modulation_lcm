@@ -55,8 +55,9 @@ def _symmetric_kl(attention_map1, attention_map2):
 def calculate_positive_loss(attention_maps, modifier, noun, layout):
     src_indices = modifier
     dest_indices = noun
-    attn_size = lambda x: F.interpolate(x.unsqueeze(0).unsqueeze(0), size=(32, 32), mode="bilinear", align_corners=False).squeeze()
-    layout = layout * 0.9 + 0.05
+    size = len(layout)
+    attn_size = lambda x: F.interpolate(x.unsqueeze(0).unsqueeze(0), size=(size, size), mode="bilinear", align_corners=False).squeeze()
+    layout = layout * 0.95 + 0.05
 
     if isinstance(src_indices, list) and isinstance(dest_indices, list):
         wp_pos_loss_1 = [
@@ -111,7 +112,7 @@ def calculate_positive_loss(attention_maps, modifier, noun, layout):
         wp_pos_loss_2 =  _symmetric_kl(attn_size(attention_maps[src_indices]), layout)
         wp_pos_loss_3 =  _symmetric_kl(layout, attn_size(attention_maps[dest_indices]))
         print(F"wp_pos_loss_1: {wp_pos_loss_1}, wp_pos_loss_2: {wp_pos_loss_2}, wp_pos_loss_3: {wp_pos_loss_3}")
-        positive_loss = (wp_pos_loss_1 + wp_pos_loss_2 + wp_pos_loss_3) / 3
+        positive_loss = (wp_pos_loss_1 + wp_pos_loss_2 + wp_pos_loss_3) / 2
     print(f"positive_loss: {positive_loss}")
     return positive_loss
 

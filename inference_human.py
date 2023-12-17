@@ -176,15 +176,20 @@ if __name__ == '__main__':
         from_where=("up", "down", "mid")
         out = []
         # res : 사이즈 다를 수도 
-        res = 12
-        num_pixels = res ** 2
+        res = 24
+        # num_pixels = res ** 2
+        num_pixels = 144
+        # step_store[f"{location}_cross"] : 12 x 12 x 77
         
         for location in from_where:
             for item in step_store[f"{location}_cross"]:
-                if item.shape[1] == num_pixels:
-                    cross_maps = torch.sum(item.reshape(-1, res, res, item.shape[-1]), dim=0)
+                print(f"item.shape: {item.shape} in {location}")
+                if item.shape[1] != num_pixels:
+                    out.append(item.reshape(-1, res, res, item.shape[-1]))
                     # out.append(cross_maps)
-        attention_maps = cross_maps
+        out = torch.cat(out, dim=0)
+        out = out.sum(0) / out.shape[0]
+        attention_maps = out
         attention_maps_list = self._get_attention_maps_list(
             attention_maps=attention_maps
         )
