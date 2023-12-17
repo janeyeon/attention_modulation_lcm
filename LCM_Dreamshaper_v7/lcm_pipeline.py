@@ -35,7 +35,7 @@ from diffusers.utils import (
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
 
 from compute_loss import get_attention_map_index_to_wordpiece, split_indices, calculate_positive_loss, calculate_negative_loss, get_indices, start_token, end_token, align_wordpieces_indices, extract_attribution_indices, extract_attribution_indices_with_verbs, extract_attribution_indices_with_verb_root
-from concentration_loss import *
+from concentration_loss import calculate_concentration_loss
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -605,7 +605,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
             noun, modifier = split_indices(subtree_indices)
             all_subtree_pairs = list(itertools.product(noun, modifier))
             if idx > 0: 
-                positive_loss, negative_loss = self._calculate_losses(
+                positive_loss, negative_loss, concentration_loss = self._calculate_losses(
                     attention_maps,
                     all_subtree_pairs,
                     subtree_indices,
@@ -615,6 +615,7 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 )
                 loss = loss + positive_loss[0]
                 loss = loss + negative_loss[0]
+                loss = loss + concentration_loss[0]
             
 
         return loss
@@ -652,17 +653,17 @@ class LatentConsistencyModelPipeline(DiffusionPipeline):
                 )
             )
 
-            # concentration_loss.append(
-            #     calculate_concentration_loss(
-            #         attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp, selected_layout
-            #     )
-            # )
+            concentration_loss.append(
+                calculate_concentration_loss(
+                    attention_maps, modifier, noun, subtree_indices, attn_map_idx_to_wp, selected_layout
+                )
+            )
 
         # positive_loss = torch.sum(positive_loss)
         # negative_loss = torch.sum(negative_loss)
     
 
-        return positive_loss, negative_loss
+        return positive_loss, negative_loss, concentration_loss
 
     def _align_indices(self, prompt, spacy_pairs):
         wordpieces2indices = get_indices(self.tokenizer, prompt)

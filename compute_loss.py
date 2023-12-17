@@ -65,11 +65,11 @@ def calculate_positive_loss(attention_maps, modifier, noun, layout):
             for (s, d) in itertools.product(src_indices, dest_indices)
         ]
         wp_pos_loss_2 = [
-            _symmetric_kl(layout * max(attention_maps[d]), attention_maps[d])
+            _symmetric_kl(layout , attention_maps[d])
             for d in dest_indices
         ]
         wp_pos_loss_3 = [
-            _symmetric_kl(attention_maps[s], layout * max(attention_maps[s]))
+            _symmetric_kl(attention_maps[s], layout)
             for s in src_indices
         ]
 
